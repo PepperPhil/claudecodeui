@@ -10,7 +10,7 @@ import type {
   RefObject,
   TouchEvent,
 } from 'react';
-import { PaperclipIcon, MessageSquareIcon, XIcon, Loader2, ArrowUpIcon, PencilIcon } from 'lucide-react';
+import { PaperclipIcon, MessageSquareIcon, XIcon, Loader2, ArrowUpIcon, PencilIcon, RotateCw } from 'lucide-react';
 
 import { useVoiceInput } from '@/modules/chat/hooks/useVoiceInput';
 import { useVoiceAvailable } from '@/modules/chat/hooks/useVoiceAvailable';
@@ -34,6 +34,7 @@ import TokenUsageSummary from '@/modules/chat/composer/TokenUsageSummary';
 import QueuedMessageCard from '@/modules/chat/composer/QueuedMessageCard';
 import BackgroundSendDialog from '@/modules/chat/composer/BackgroundSendDialog';
 import { ScheduleMessagePopover } from '@/modules/chat/composer/ScheduleMessagePopover';
+import { cn } from '@/shared/utils';
 import { ScheduledMessageList } from '@/modules/chat/composer/ScheduledMessageList';
 import ComposerModelMenu from '@/modules/chat/composer/ComposerModelMenu';
 import ComposerPermissionMenu from '@/modules/chat/composer/ComposerPermissionMenu';
@@ -82,6 +83,8 @@ type ChatComposerProps = {
   scheduledMessages: ScheduledMessage[];
   onScheduleMessage: (scheduledFor: Date) => void;
   onCancelScheduledMessage: (id: string) => void;
+  /** This session's "continue after the usage limit" switch; absent where it does not apply. */
+  autoContinue?: { enabled: boolean; onChange: (enabled: boolean) => void };
   onEditQueuedDraft: () => void;
   onDeleteQueuedDraft: () => void;
   attachedFiles: File[];
@@ -157,6 +160,7 @@ export default function ChatComposer({
   scheduledMessages,
   onScheduleMessage,
   onCancelScheduledMessage,
+  autoContinue,
   onEditQueuedDraft,
   onDeleteQueuedDraft,
   attachedFiles,
@@ -483,6 +487,22 @@ export default function ChatComposer({
           </PromptInputTools>
 
           <div className="ml-auto flex shrink-0 items-center gap-1.5 sm:gap-2">
+            {autoContinue && (
+              <button
+                type="button"
+                onClick={() => autoContinue.onChange(!autoContinue.enabled)}
+                aria-pressed={autoContinue.enabled}
+                aria-label={t('autoContinue.toggle')}
+                title={t('autoContinue.toggle')}
+                className={cn(
+                  'flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-muted/40 transition-colors hover:bg-muted hover:text-foreground',
+                  autoContinue.enabled ? 'border-primary/60 text-primary' : 'text-muted-foreground',
+                )}
+              >
+                <RotateCw className="h-4 w-4" />
+              </button>
+            )}
+
             <ScheduleMessagePopover
               disabled={!input.trim()}
               onSchedule={onScheduleMessage}

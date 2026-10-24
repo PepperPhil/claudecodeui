@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { closeConnection, initializeDatabase, scheduledMessagesDb, sessionDraftsDb, sessionsDb, userDb } from '@/modules/database/index.js';
+import { closeConnection, initializeDatabase, scheduledMessagesDb, sessionDraftsDb, sessionsDb, userDb, userPreferencesDb } from '@/modules/database/index.js';
 import { dispatchDueScheduledMessages, dispatchQueuedMessages } from '@/modules/scheduled-messages/services/scheduled-message-dispatcher.service.js';
 import { scheduledMessagesService } from '@/modules/scheduled-messages/services/scheduled-messages.service.js';
 import { chatRunRegistry } from '@/modules/websocket/index.js';
@@ -22,6 +22,7 @@ async function withIsolatedDatabase(runTest: (userId: number) => void | Promise<
   try {
     const user = userDb.createUser('scheduler', 'hash');
     sessionsDb.createAppSession(SESSION_ID, 'claude', tempDirectory, 'Scheduled session');
+    sessionsDb.setSessionAutoContinue(SESSION_ID, true);
     await runTest(Number(user.id));
   } finally {
     chatRunRegistry.clearAll();
@@ -217,6 +218,257 @@ test('a due message interrupts a run in progress instead of failing', async () =
     assert.equal(runs.length, 1);
     assert.equal(runs[0].command, 'the schedule wins');
     assert.equal(scheduledMessagesDb.listForSession(userId, SESSION_ID)[0].status, 'sent');
+  });
+});
+
+test('an automatic continue is dropped when another turn is running', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    scheduledMessagesDb.create({
+      userId,
+      sessionId: SESSION_ID,
+      content: 'continue',
+      options: { autoContinue: true },
+      scheduledFor: new Date(Date.now() - 1_000),
+    });
+    chatRunRegistry.startRun({
+      appSessionId: SESSION_ID,
+      provider: 'claude',
+      providerSessionId: null,
+      connection: null,
+      userId,
+    });
+
+    const runs: RunCall[] = [];
+    const aborts: string[] = [];
+    await dispatchDueScheduledMessages(createRuntime(runs, 'ok', aborts));
+
+    assert.deepEqual(aborts, []);
+    assert.equal(runs.length, 0);
+    // Someone took the session over; never interrupt, and do not come back later.
+    assert.equal(scheduledMessagesDb.listForSession(userId, SESSION_ID)[0].status, 'cancelled');
+  });
+});
+
+test('an automatic continue waits for background work the stopped turn left running', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    scheduledMessagesDb.create({
+      userId,
+      sessionId: SESSION_ID,
+      content: 'continue',
+      options: { autoContinue: true },
+      scheduledFor: new Date(Date.now() - 1_000),
+    });
+
+    const runs: RunCall[] = [];
+    await dispatchDueScheduledMessages(createRuntime(runs, 'ok', [], () => true));
+
+    assert.equal(runs.length, 0);
+    // That work belongs to the turn being continued; going now would kill it.
+    assert.equal(scheduledMessagesDb.listForSession(userId, SESSION_ID)[0].status, 'pending');
+  });
+});
+
+test('an automatic continue that could not start still says so', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    scheduledMessagesDb.create({
+      userId,
+      sessionId: SESSION_ID,
+      content: 'continue',
+      options: { autoContinue: true },
+      scheduledFor: new Date(Date.now() - 1_000),
+    });
+
+    const unavailable = { ...(createRuntime([]) as object), hasRuntime: () => false } as never;
+    await dispatchDueScheduledMessages(unavailable);
+
+    assert.equal(scheduledMessagesDb.listForSession(userId, SESSION_ID)[0].status, 'failed');
+  });
+});
+
+test('an automatic continue whose run failed says so', async () => {
+  // Nobody may be watching the chat when it fires; the banner is what they come back to.
+  await withIsolatedDatabase(async (userId) => {
+    scheduledMessagesDb.create({
+      userId,
+      sessionId: SESSION_ID,
+      content: 'continue',
+      options: { autoContinue: true },
+      scheduledFor: new Date(Date.now() - 1_000),
+    });
+
+    await dispatchDueScheduledMessages(createRuntime([], 'throw'));
+
+    assert.equal(scheduledMessagesDb.listForSession(userId, SESSION_ID)[0].status, 'failed');
+  });
+});
+
+test('an automatic continue that loses the start to another run is dropped', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    scheduledMessagesDb.create({
+      userId,
+      sessionId: SESSION_ID,
+      content: 'continue',
+      options: { autoContinue: true },
+      scheduledFor: new Date(Date.now() - 1_000),
+    });
+    // The user's run starts between the busy check and the dispatch.
+    const racing = {
+      ...(createRuntime([]) as object),
+      hasBackgroundWork: () => {
+        chatRunRegistry.startRun({ appSessionId: SESSION_ID, provider: 'claude', providerSessionId: null, connection: null, userId });
+        return false;
+      },
+    } as never;
+
+    await dispatchDueScheduledMessages(racing);
+
+    assert.equal(scheduledMessagesDb.listForSession(userId, SESSION_ID)[0].status, 'cancelled');
+  });
+});
+
+test('an automatic continue is dropped if its session had auto-continue turned off meanwhile', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    scheduledMessagesDb.create({
+      userId,
+      sessionId: SESSION_ID,
+      content: 'continue',
+      options: { autoContinue: true },
+      scheduledFor: new Date(Date.now() - 1_000),
+    });
+    sessionsDb.setSessionAutoContinue(SESSION_ID, false);
+
+    const runs: RunCall[] = [];
+    await dispatchDueScheduledMessages(createRuntime(runs));
+
+    assert.equal(runs.length, 0);
+    assert.equal(scheduledMessagesDb.listForSession(userId, SESSION_ID)[0].status, 'cancelled');
+  });
+});
+
+test('an automatic continue that came due while the server was down is still sent', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    scheduledMessagesDb.create({
+      userId,
+      sessionId: SESSION_ID,
+      content: 'continue',
+      options: { autoContinue: true },
+      scheduledFor: new Date(Date.now() - 2 * 60 * 60_000),
+    });
+
+    const runs: RunCall[] = [];
+    await dispatchDueScheduledMessages(createRuntime(runs));
+
+    assert.equal(runs.length, 1);
+  });
+});
+
+test('an automatic continue that came due more than a day ago is not sent, and says why', async () => {
+  // By then the conversation has moved on.
+  await withIsolatedDatabase(async (userId) => {
+    scheduledMessagesDb.create({
+      userId,
+      sessionId: SESSION_ID,
+      content: 'continue',
+      options: { autoContinue: true },
+      // Due a day ago, as after a long outage.
+      scheduledFor: new Date(Date.now() - 25 * 60 * 60_000),
+    });
+
+    const runs: RunCall[] = [];
+    await dispatchDueScheduledMessages(createRuntime(runs));
+
+    assert.equal(runs.length, 0);
+    const [row] = scheduledMessagesDb.listForSession(userId, SESSION_ID);
+    assert.equal(row.status, 'failed');
+    assert.match(row.failure_reason ?? '', /more than a day late/);
+  });
+});
+
+test('an over-late automatic continue the user had switched off is still dropped quietly', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    scheduledMessagesDb.create({
+      userId,
+      sessionId: SESSION_ID,
+      content: 'continue',
+      options: { autoContinue: true },
+      scheduledFor: new Date(Date.now() - 25 * 60 * 60_000),
+    });
+    sessionsDb.setSessionAutoContinue(SESSION_ID, false);
+
+    await dispatchDueScheduledMessages(createRuntime([]));
+
+    assert.equal(scheduledMessagesDb.listForSession(userId, SESSION_ID)[0].status, 'cancelled');
+  });
+});
+
+test('an automatic continue still waiting an hour after it was due is dropped', async () => {
+  // Background work that never ends must not keep it alive into a stale conversation.
+  await withIsolatedDatabase(async (userId) => {
+    scheduledMessagesDb.create({
+      userId,
+      sessionId: SESSION_ID,
+      content: 'continue',
+      options: { autoContinue: true },
+      scheduledFor: new Date(Date.now() - 61 * 60_000),
+    });
+
+    const runs: RunCall[] = [];
+    await dispatchDueScheduledMessages(createRuntime(runs, 'ok', [], () => true));
+
+    assert.equal(runs.length, 0);
+    assert.equal(scheduledMessagesDb.listForSession(userId, SESSION_ID)[0].status, 'cancelled');
+  });
+});
+
+test('an automatic continue runs with the tool permissions the user has when it fires', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    const current = { allowedTools: ['Bash'], disallowedTools: [], skipPermissions: false };
+    userPreferencesDb.savePreferences(userId, { claudePermissions: current });
+    scheduledMessagesDb.create({
+      userId,
+      sessionId: SESSION_ID,
+      content: 'continue',
+      options: { autoContinue: true, toolsSettings: { allowedTools: [], disallowedTools: [], skipPermissions: true } },
+      scheduledFor: new Date(Date.now() - 1_000),
+    });
+
+    const runs: RunCall[] = [];
+    await dispatchDueScheduledMessages(createRuntime(runs));
+
+    assert.deepEqual(runs[0].options.toolsSettings, current);
+  });
+});
+
+test('stored tool permissions of the wrong shape never widen what the continue may do', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    userPreferencesDb.savePreferences(userId, {
+      claudePermissions: { allowedTools: 'Bash', disallowedTools: ['Write', 3], skipPermissions: 'false' },
+    });
+    scheduledMessagesDb.create({
+      userId,
+      sessionId: SESSION_ID,
+      content: 'continue',
+      options: { autoContinue: true },
+      scheduledFor: new Date(Date.now() - 1_000),
+    });
+
+    const runs: RunCall[] = [];
+    await dispatchDueScheduledMessages(createRuntime(runs));
+
+    assert.deepEqual(runs[0].options.toolsSettings, { allowedTools: [], disallowedTools: ['Write'], skipPermissions: false });
+  });
+});
+
+test('a client cannot mark its own message as the automatic continue', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    const scheduled = scheduledMessagesService.schedule({
+      userId,
+      sessionId: SESSION_ID,
+      content: 'hello',
+      options: { autoContinue: true, model: 'opus' },
+      scheduledFor: new Date(Date.now() + 60_000).toISOString(),
+    });
+    assert.deepEqual(scheduled.options, { model: 'opus' });
   });
 });
 

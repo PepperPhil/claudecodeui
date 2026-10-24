@@ -17,6 +17,7 @@ import type {
   SessionNavigationOptions,
 } from '@/shared/types';
 import { useChatProviderState } from '@/modules/chat/hooks/useChatProviderState';
+import { useSessionAutoContinue } from '@/modules/chat/composer/useSessionAutoContinue';
 import { useScheduledMessages } from '@/modules/chat/composer/useScheduledMessages';
 import { useChatSessionState } from '@/modules/chat/hooks/useChatSessionState';
 import { useChatRealtimeHandlers } from '@/modules/chat/hooks/useChatRealtimeHandlers';
@@ -124,6 +125,7 @@ function ChatInterface({
     resolvePermissionModeForProvider,
     supportsMessageEditing,
     supportsSessionForking,
+    selectedSessionProvider,
   } = useChatProviderState({
     selectedSession,
     selectedProject,
@@ -372,8 +374,23 @@ function ChatInterface({
     }
   }, [onNavigateToSession, selectedSession?.id]);
 
-  const { scheduledMessages, schedule: scheduleMessage, cancel: cancelScheduledMessage } =
+  const { scheduledMessages, schedule: scheduleMessage, cancel: cancelScheduledMessage, refresh: refreshScheduledMessages } =
     useScheduledMessages(currentSessionId || selectedSession?.id || null);
+
+  // Target and provider gate both follow the selected session; currentSessionId catches up a render later.
+  const autoContinueSessionId = selectedSession?.id ?? currentSessionId ?? null;
+  const sessionAutoContinue = useSessionAutoContinue(autoContinueSessionId);
+  const { setEnabled: setSessionAutoContinue } = sessionAutoContinue;
+  const handleAutoContinueChange = useCallback(async (enabled: boolean) => {
+    await setSessionAutoContinue(enabled);
+    // Turning it off drops a waiting continue on the server; take its banner down.
+    if (!enabled) void refreshScheduledMessages();
+  }, [refreshScheduledMessages, setSessionAutoContinue]);
+
+  // A turn stopped by the usage limit leaves a server-scheduled "continue" behind.
+  useEffect(() => {
+    if (!isProcessing) void refreshScheduledMessages();
+  }, [isProcessing, refreshScheduledMessages]);
 
   /**
    * Hands the composer's current text to the server to send later, and clears
@@ -558,6 +575,10 @@ function ChatInterface({
           scheduledMessages={scheduledMessages}
           onScheduleMessage={handleScheduleMessage}
           onCancelScheduledMessage={cancelScheduledMessage}
+          // Only Claude chats are continued after a usage limit.
+          autoContinue={selectedSessionProvider === 'claude' && autoContinueSessionId
+            ? { enabled: sessionAutoContinue.enabled, onChange: handleAutoContinueChange }
+            : undefined}
           slashCommandsCount={slashCommandsCount}
           onToggleCommandMenu={handleToggleCommandMenu}
           hasInput={Boolean(input.trim())}

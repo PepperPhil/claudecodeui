@@ -457,6 +457,13 @@ const addSessionEffortColumn = (db: Database): void => {
   addColumnToTableIfNotExists(db, 'sessions', columnNames, 'effort', 'TEXT');
 };
 
+/** Adds the per-session opt-in for continuing automatically after the usage limit. */
+const addSessionAutoContinueColumn = (db: Database): void => {
+  const columnNames = getTableInfo(db, 'sessions').map((column) => column.name);
+
+  addColumnToTableIfNotExists(db, 'sessions', columnNames, 'auto_continue', 'INTEGER NOT NULL DEFAULT 0');
+};
+
 /**
  * Adds the reasoning-effort metadata columns to the custom-model library.
  *
@@ -532,6 +539,7 @@ export const runMigrations = (db: Database) => {
     addProviderSessionIdMapping(db);
     addSessionModelColumn(db);
     addSessionEffortColumn(db);
+    addSessionAutoContinueColumn(db);
     addForkedFromSessionIdColumn(db);
     ensureProjectsForSessionPaths(db);
     db.exec(SCHEDULED_MESSAGES_TABLE_SCHEMA_SQL);

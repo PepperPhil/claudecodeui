@@ -273,6 +273,9 @@
       "description": "Alle Nachrichten, unformatiert, für Tools."
     }
   },
+  "autoContinue": {
+    "toggle": "Nach Nutzungslimit automatisch fortsetzen"
+  },
   "schedule": {
     "trigger": "Nachricht planen",
     "heading": "Später senden",

@@ -41,6 +41,7 @@ import {
   getReportedClaudeContextWindow,
   rememberClaudeContextWindow
 } from '@/modules/providers/services/provider-token-usage.service.js';
+import { scheduledMessagesDb, sessionsDb } from '@/modules/database/index.js';
 import { createCompleteMessage, createNormalizedMessage } from '@/shared/utils.js';
 
 const activeSessions = new Map();
@@ -961,6 +962,89 @@ async function loadMcpConfig(cwd) {
 }
 
 /**
+ * Watches a run for a claude.ai usage limit that stopped the turn.
+ *
+ * The SDK reports the reset time in a `rate_limit_event` and the stop itself
+ * as a synthetic assistant message with `error: 'rate_limit'`. Claude Code's
+ * own "continue automatically at usage limit" only runs in interactive
+ * sessions, never in SDK runs, so the app schedules the "continue" itself.
+ *
+ * @returns {(sdkMessage: Object, now?: number) => Date|null} When to continue, once per limit hit
+ */
+export function createUsageLimitWatcher() {
+  // Reset time per limit window that currently rejects (five_hour, seven_day, ...).
+  const rejectedResets = new Map();
+  let stopped = false;
+  return (sdkMessage, now = Date.now()) => {
+    if (sdkMessage?.type === 'rate_limit_event') {
+      const info = sdkMessage.rate_limit_info;
+      const window = info?.rateLimitType ?? 'default';
+      if (info?.status === 'rejected' && typeof info.resetsAt === 'number') {
+        // Epoch seconds per the CLI; milliseconds accepted in case that changes.
+        rejectedResets.set(window, info.resetsAt < 1e12 ? info.resetsAt * 1000 : info.resetsAt);
+      } else {
+        rejectedResets.delete(window);
+      }
+    } else if (
+      sdkMessage?.type === 'assistant'
+      && sdkMessage.error === 'rate_limit'
+      // A subagent's limit error is the main turn's to handle.
+      && !sdkMessage.parent_tool_use_id
+    ) {
+      stopped = true;
+    } else if (sdkMessage?.type === 'result') {
+      // The turn is over; half a signal must not pair with a later turn's.
+      rejectedResets.clear();
+      stopped = false;
+    }
+    // The two can arrive in either order; answer once both are in.
+    if (!stopped || rejectedResets.size === 0) {
+      return null;
+    }
+    // Requests go through again once every rejecting window has reset.
+    const resetAt = Math.max(...rejectedResets.values());
+    rejectedResets.clear();
+    stopped = false;
+    // Like Claude Code itself: a weekly limit is not waited out unattended.
+    if (!(resetAt > now) || resetAt - now > 24 * 60 * 60 * 1000) {
+      return null;
+    }
+    // A minute of slack so the first request after the reset is not refused again.
+    return new Date(resetAt + 60_000);
+  };
+}
+
+/**
+ * Schedules the "continue" for a turn the usage limit stopped, if the session
+ * has auto-continue turned on. It shows up as a pending scheduled message the user
+ * can cancel.
+ *
+ * @returns {boolean} Whether a continue was scheduled
+ */
+export function scheduleUsageLimitContinue({ userId, sessionId, runOptions, continueAt }) {
+  if (sessionsDb.getSessionById(sessionId)?.auto_continue !== 1) {
+    return false;
+  }
+  // At most one waits per session; the latest limit hit has the current reset.
+  // Created first, so a failed insert leaves the earlier one in place.
+  const { id } = scheduledMessagesDb.create({
+    userId,
+    sessionId,
+    content: 'continue',
+    // Tool permissions are added when it fires, from the user's settings then.
+    options: {
+      model: runOptions.model,
+      effort: runOptions.effort,
+      permissionMode: runOptions.permissionMode,
+      autoContinue: true,
+    },
+    scheduledFor: continueAt,
+  });
+  scheduledMessagesDb.cancelPendingAutoContinue(sessionId, id);
+  return true;
+}
+
+/**
  * Executes a Claude query using the SDK
  * @param {string} command - User prompt/command
  * @param {Object} options - Query options
@@ -996,6 +1080,8 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
   // The client is told the turn is over as soon as `result` lands, even though
   // the process lingers, so the UI never waits out the idle hold.
   let turnCompleteSent = false;
+  const watchUsageLimit = createUsageLimitWatcher();
+  let autoContinueDropped = false;
   // Set when a turn starts background work, cleared when the next `result`
   // arrives — only turns with work still outstanding hold their process open.
   let backgroundWorkPending = false;
@@ -1210,6 +1296,36 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
     // Process streaming messages
     console.log('Starting async generator loop for session:', capturedSessionId || 'NEW');
     for await (const message of queryInstance) {
+      // Once per query: the CLI is up, so the user took over before the reset
+      // fired the waiting continue. Later inits (follow-up turns of held-open
+      // background work) are not the user. A turn still refused by the limit
+      // schedules a fresh continue below.
+      if (!autoContinueDropped && message.type === 'system' && message.subtype === 'init' && sessionId) {
+        try {
+          scheduledMessagesDb.cancelPendingAutoContinue(sessionId);
+          autoContinueDropped = true;
+        } catch (error) {
+          console.error('[Claude] Could not drop the waiting continue:', error.message);
+        }
+      }
+      const continueAt = watchUsageLimit(message);
+      if (continueAt && sessionId && ws?.userId != null) {
+        try {
+          const scheduled = scheduleUsageLimitContinue({
+            userId: Number(ws.userId),
+            sessionId,
+            runOptions: options,
+            continueAt,
+          });
+          // Whatever this query's init could still drop is now its own continue.
+          if (scheduled) {
+            autoContinueDropped = true;
+          }
+        } catch (error) {
+          // Best effort: the turn's own stream must not die over the follow-up.
+          console.error('[Claude] Could not schedule the continue after the usage limit:', error.message);
+        }
+      }
       // Capture session ID from first message
       if (message.session_id && !capturedSessionId) {
 
