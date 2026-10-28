@@ -837,5 +837,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     resolvePermissionModeForProvider,
     supportsMessageEditing,
     supportsSessionForking,
+    // The open session's provider without the one-render lag of `provider`.
+    selectedSessionProvider,
   };
 }

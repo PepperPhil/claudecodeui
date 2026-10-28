@@ -13,6 +13,8 @@ type SessionRow = {
   model: string | null;
   /** Reasoning effort this session runs with; NULL until the app records one. */
   effort: string | null;
+  /** 1 when a turn stopped by the usage limit is continued automatically after the reset. */
+  auto_continue: number;
   /** The app session this one was branched from; NULL unless it is a fork. */
   forked_from_session_id: string | null;
   isArchived: number;
@@ -26,7 +28,7 @@ type RecentSessionsPage = {
 };
 
 const SESSION_ROW_COLUMNS =
-  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, model, effort, forked_from_session_id, isArchived, created_at, updated_at';
+  'session_id, provider, provider_session_id, project_path, jsonl_path, custom_name, model, effort, auto_continue, forked_from_session_id, isArchived, created_at, updated_at';
 
 const SQLITE_UTC_TIMESTAMP_REGEX = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
 
@@ -437,6 +439,12 @@ export const sessionsDb = {
        SET effort = ?
        WHERE session_id = ?`
     ).run(effort, sessionId);
+  },
+
+  setSessionAutoContinue(sessionId: string, enabled: boolean): void {
+    getConnection()
+      .prepare('UPDATE sessions SET auto_continue = ? WHERE session_id = ?')
+      .run(enabled ? 1 : 0, sessionId);
   },
 
   updateSessionCustomName(sessionId: string, customName: string): void {

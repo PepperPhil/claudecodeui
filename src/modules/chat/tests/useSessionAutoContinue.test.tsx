@@ -1,0 +1,177 @@
+import assert from 'node:assert/strict';
+
+import { act, renderHook, waitFor } from '@testing-library/react';
+import { afterEach, test, vi } from 'vitest';
+
+import { api } from '@/shared/api';
+import { useSessionAutoContinue } from '@/modules/chat/composer/useSessionAutoContinue';
+
+function flagResponse(enabled: boolean, ok = true): Response {
+  return { ok, json: async () => ({ data: { enabled } }) } as unknown as Response;
+}
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+test('each session shows its own auto-continue setting', async () => {
+  vi.spyOn(api, 'sessionAutoContinue').mockImplementation(async (sessionId: string) =>
+    flagResponse(sessionId === 'session-a'));
+
+  const { result, rerender } = renderHook(({ sessionId }) => useSessionAutoContinue(sessionId), {
+    initialProps: { sessionId: 'session-a' as string | null },
+  });
+  await waitFor(() => assert.equal(result.current.enabled, true));
+
+  rerender({ sessionId: 'session-b' });
+  // Never shows session A's setting on session B, not even while B's loads.
+  assert.equal(result.current.enabled, false);
+});
+
+test('toggling saves the setting for the session', async () => {
+  vi.spyOn(api, 'sessionAutoContinue').mockResolvedValue(flagResponse(false));
+  const save = vi.spyOn(api, 'setSessionAutoContinue').mockResolvedValue(flagResponse(true));
+
+  const { result } = renderHook(() => useSessionAutoContinue('session-a'));
+  await waitFor(() => assert.equal(result.current.enabled, false));
+
+  await act(async () => {
+    await result.current.setEnabled(true);
+  });
+
+  assert.deepEqual(save.mock.calls, [['session-a', true]]);
+  assert.equal(result.current.enabled, true);
+});
+
+test('a failed save puts the toggle back', async () => {
+  vi.spyOn(api, 'sessionAutoContinue').mockResolvedValue(flagResponse(false));
+  vi.spyOn(api, 'setSessionAutoContinue').mockResolvedValue(flagResponse(true, false));
+  vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+  const { result } = renderHook(() => useSessionAutoContinue('session-a'));
+  await waitFor(() => assert.equal(result.current.enabled, false));
+
+  await act(async () => {
+    await result.current.setEnabled(true);
+  });
+
+  assert.equal(result.current.enabled, false);
+});
+
+test('a slow read for the previous session cannot land on the next one', async () => {
+  let releaseSessionA: (() => void) | undefined;
+  vi.spyOn(api, 'sessionAutoContinue').mockImplementation((sessionId: string) => {
+    if (sessionId === 'session-a') {
+      return new Promise<Response>((resolve) => {
+        releaseSessionA = () => resolve(flagResponse(true));
+      });
+    }
+    return Promise.resolve(flagResponse(false));
+  });
+
+  const { result, rerender } = renderHook(({ sessionId }) => useSessionAutoContinue(sessionId), {
+    initialProps: { sessionId: 'session-a' as string | null },
+  });
+  rerender({ sessionId: 'session-b' });
+  await waitFor(() => assert.ok(releaseSessionA));
+
+  await act(async () => {
+    releaseSessionA?.();
+  });
+
+  assert.equal(result.current.enabled, false);
+});
+
+test('a slow first read does not undo a toggle made meanwhile', async () => {
+  let releaseRead: (() => void) | undefined;
+  vi.spyOn(api, 'sessionAutoContinue').mockImplementation(() => new Promise<Response>((resolve) => {
+    releaseRead = () => resolve(flagResponse(false));
+  }));
+  vi.spyOn(api, 'setSessionAutoContinue').mockResolvedValue(flagResponse(true));
+
+  const { result } = renderHook(() => useSessionAutoContinue('session-a'));
+  await waitFor(() => assert.ok(releaseRead));
+  await act(async () => {
+    await result.current.setEnabled(true);
+  });
+  await act(async () => {
+    releaseRead?.();
+  });
+
+  assert.equal(result.current.enabled, true);
+});
+
+test('a failed older save does not undo a newer choice', async () => {
+  vi.spyOn(api, 'sessionAutoContinue').mockResolvedValue(flagResponse(false));
+  vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  let failFirst: (() => void) | undefined;
+  vi.spyOn(api, 'setSessionAutoContinue')
+    .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+      failFirst = () => resolve(flagResponse(true, false));
+    }))
+    .mockResolvedValue(flagResponse(true));
+
+  const { result } = renderHook(() => useSessionAutoContinue('session-a'));
+  await waitFor(() => assert.equal(result.current.enabled, false));
+
+  let firstSave: Promise<void> | undefined;
+  act(() => {
+    firstSave = result.current.setEnabled(true);
+  });
+  await act(async () => {
+    await result.current.setEnabled(false);
+  });
+  await act(async () => {
+    await result.current.setEnabled(true);
+  });
+  await act(async () => {
+    failFirst?.();
+    await firstSave;
+  });
+
+  // Rolling the first click back would flip the newest choice off.
+  assert.equal(result.current.enabled, true);
+});
+
+test('a failed save shows what the server actually has', async () => {
+  // The first read is discarded by the click; the rollback must not guess.
+  let releaseFirstRead: (() => void) | undefined;
+  const read = vi.spyOn(api, 'sessionAutoContinue')
+    .mockImplementationOnce(() => new Promise<Response>((resolve) => {
+      releaseFirstRead = () => resolve(flagResponse(true));
+    }))
+    .mockResolvedValue(flagResponse(true));
+  vi.spyOn(api, 'setSessionAutoContinue').mockResolvedValue(flagResponse(false, false));
+  vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+  const { result } = renderHook(() => useSessionAutoContinue('session-a'));
+  await waitFor(() => assert.ok(releaseFirstRead));
+  await act(async () => {
+    await result.current.setEnabled(true);
+  });
+  await act(async () => {
+    releaseFirstRead?.();
+  });
+
+  // Guessing `!next` would show off; the server says on.
+  await waitFor(() => assert.equal(result.current.enabled, true));
+  assert.equal(read.mock.calls.length, 2);
+});
+
+test('a failed save rolls back when the server cannot be read either', async () => {
+  const read = vi.spyOn(api, 'sessionAutoContinue')
+    .mockResolvedValueOnce(flagResponse(false))
+    .mockResolvedValue(flagResponse(true, false));
+  vi.spyOn(api, 'setSessionAutoContinue').mockResolvedValue(flagResponse(true, false));
+  vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+  const { result } = renderHook(() => useSessionAutoContinue('session-a'));
+  await waitFor(() => assert.equal(result.current.enabled, false));
+  await act(async () => {
+    await result.current.setEnabled(true);
+  });
+
+  // An error reply is not the server's answer; nothing was saved.
+  assert.equal(read.mock.calls.length, 2);
+  assert.equal(result.current.enabled, false);
+});

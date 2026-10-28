@@ -46,9 +46,9 @@ export function ComposerMenuHeading({ children }: { children: ReactNode }) {
   );
 }
 
-/** Used by chat's ComposerModelMenu to divide its model and effort sections. */
+/** Used by chat's ComposerModelMenu to divide its model and effort sections, by ComposerPermissionMenu to set auto-continue apart from the modes, and by ScheduleMessagePopover. */
 export function ComposerMenuSeparator() {
-  return <div className="my-1 h-px bg-border" aria-hidden />;
+  return <div role="separator" className="my-1 h-px bg-border" />;
 }
 
 /** Used by chat's ComposerModelMenu and ComposerPermissionMenu to render one selectable row with its checked state. */
@@ -67,7 +67,7 @@ export function ComposerMenuItem({
   icon?: ReactNode;
   isSelected: boolean;
   onSelect: () => void;
-  role?: 'menuitemradio' | 'menuitem';
+  role?: 'menuitemradio' | 'menuitemcheckbox' | 'menuitem';
   trailing?: ReactNode;
   className?: string;
 }) {
@@ -75,7 +75,7 @@ export function ComposerMenuItem({
     <button
       type="button"
       role={role}
-      aria-checked={role === 'menuitemradio' ? isSelected : undefined}
+      aria-checked={role === 'menuitem' ? undefined : isSelected}
       onClick={onSelect}
       className={cn(
         'flex w-full items-start gap-2.5 rounded-lg px-2.5 py-1.5 text-left text-sm transition-colors',

@@ -76,7 +76,7 @@ export const scheduledMessagesDb = {
    * message up instead of skipping it. Doing it in one transaction is what
    * stops two overlapping polls from sending the same message twice.
    */
-  claimDue(now: Date): ScheduledMessageRow[] {
+  claimDue(now: Date, shouldClaim: (row: ScheduledMessageRow) => boolean = () => true): ScheduledMessageRow[] {
     const db = getConnection();
     const nowIso = now.toISOString();
 
@@ -88,14 +88,16 @@ export const scheduledMessagesDb = {
            ORDER BY scheduled_for ASC`
         )
         .all(nowIso) as ScheduledMessageRow[];
+      // Rows left out stay pending for a later poll, untouched.
+      const claimed = due.filter(shouldClaim);
 
-      for (const row of due) {
+      for (const row of claimed) {
         db.prepare(
           `UPDATE scheduled_messages SET status = 'sent', updated_at = CURRENT_TIMESTAMP WHERE id = ?`
         ).run(row.id);
       }
 
-      return due;
+      return claimed;
     })();
   },
 
@@ -107,6 +109,25 @@ export const scheduledMessagesDb = {
          WHERE id = ?`
       )
       .run(reason.slice(0, 500), id);
+  },
+
+  /** Settles a claimed message that was deliberately not sent, without a failure banner. */
+  markCancelled(id: string): void {
+    getConnection()
+      .prepare(`UPDATE scheduled_messages SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .run(id);
+  },
+
+  /** Drops the session's waiting automatic "continue" after a usage limit, except `keepId`. */
+  cancelPendingAutoContinue(sessionId: string, keepId = ''): void {
+    getConnection()
+      .prepare(
+        `UPDATE scheduled_messages
+         SET status = 'cancelled', updated_at = CURRENT_TIMESTAMP
+         WHERE session_id = ? AND id != ? AND status = 'pending'
+           AND json_extract(options, '$.autoContinue') = 1`
+      )
+      .run(sessionId, keepId);
   },
 
   /**

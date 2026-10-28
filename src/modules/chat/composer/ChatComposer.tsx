@@ -82,6 +82,8 @@ type ChatComposerProps = {
   scheduledMessages: ScheduledMessage[];
   onScheduleMessage: (scheduledFor: Date) => void;
   onCancelScheduledMessage: (id: string) => void;
+  /** This session's "continue after the usage limit" switch; absent where it does not apply. */
+  autoContinue?: { enabled: boolean; onChange: (enabled: boolean) => void };
   onEditQueuedDraft: () => void;
   onDeleteQueuedDraft: () => void;
   attachedFiles: File[];
@@ -157,6 +159,7 @@ export default function ChatComposer({
   scheduledMessages,
   onScheduleMessage,
   onCancelScheduledMessage,
+  autoContinue,
   onEditQueuedDraft,
   onDeleteQueuedDraft,
   attachedFiles,
@@ -503,6 +506,8 @@ export default function ChatComposer({
               permissionModes={availablePermissionModes}
               onSelectPermissionMode={onSelectPermissionMode}
               providerLabel={providerLabel}
+              autoContinueEnabled={autoContinue?.enabled}
+              onAutoContinueChange={autoContinue?.onChange}
             />
 
             <PromptInputSubmit
