@@ -42,6 +42,7 @@ const FALLBACK_DEFAULT_MODEL: Record<LLMProvider, string> = {
 const PROVIDERS: LLMProvider[] = ['claude', 'cursor', 'codex', 'opencode'];
 
 type ComposerSession = { provider: LLMProvider; sessionId: string };
+type SeededSession = ComposerSession & { newSessionTrigger: number | undefined; projectPath: string | null };
 
 /**
  * The session a model or effort pick is saved on: the composer's. A value from
@@ -522,7 +523,7 @@ export function useChatProviderState({
   const selectedProjectPath = selectedProject?.fullPath?.trim() || null;
   // The session this new chat just created, until navigation selects it.
   // State, not a ref: what the composer targets has to re-render its readers.
-  const [seededSession, setSeededSession] = useState<ComposerSession | null>(null);
+  const [seededSession, setSeededSession] = useState<SeededSession | null>(null);
   // Selection saves still in flight per session id, each with the field it
   // writes, and a count of all saves ever started. A load of a session waits
   // for its saves and reads again when any save started during its read, so
@@ -548,16 +549,21 @@ export function useChatProviderState({
     if (selectedSessionId) {
       return { provider, sessionId: selectedSessionId };
     }
-    // A seed stands for the chat only while the chat still holds its id: the
-    // id the composer's next send goes to, so picks land where that send
-    // does. New Session and navigating away clear it in an effect, which
-    // React runs before it handles the next click.
+    // A seed stands for the chat only while the chat still holds its id (where
+    // the next send goes) and is still the new chat it was created in: same
+    // New Session click, same project. Those two are checked here, in the
+    // render they change, because the chat's id is cleared only later in an
+    // effect, and not at all while the first reply is still running.
     return seededSession
       && seededSession.sessionId === currentSessionId
       && seededSession.provider === provider
-      ? seededSession
+      && seededSession.newSessionTrigger === newSessionTrigger
+      && seededSession.projectPath === selectedProjectPath
+      ? { provider, sessionId: seededSession.sessionId }
       : null;
-  }, [currentSessionId, provider, seededSession, selectedSessionId]);
+  }, [currentSessionId, newSessionTrigger, provider, seededSession, selectedProjectPath, selectedSessionId]);
+  const newChatRef = useRef({ newSessionTrigger, projectPath: selectedProjectPath });
+  newChatRef.current = { newSessionTrigger, projectPath: selectedProjectPath };
   // For callbacks, which should not change identity with every target change.
   const composerSessionRef = useRef(composerSession);
   composerSessionRef.current = composerSession;
@@ -1035,7 +1041,7 @@ export function useChatProviderState({
   ) => {
     const read = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null);
     // Takes effect with the render that also gives the chat this id.
-    setSeededSession({ provider: targetProvider, sessionId });
+    setSeededSession({ provider: targetProvider, sessionId, ...newChatRef.current });
     setSessionSelection({
       provider: targetProvider,
       sessionId,

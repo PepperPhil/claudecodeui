@@ -313,9 +313,8 @@ test('a New Session click forgets the session the previous new chat created', as
   const { result, rerender, establish } = await renderProviderState(null);
 
   establish('claude', 'session-new', { model: 'opus' });
-  // As in ChatInterface: the trigger first, then the effect clearing the chat's id.
+  // As in ChatInterface: the trigger first; the chat's id is cleared a render later.
   rerender({ newSessionTrigger: 1 });
-  rerender({ currentSessionId: null });
   act(() => {
     result.current.selectPermissionMode('plan');
   });
@@ -462,22 +461,28 @@ test('savesPickOnSession answers from the same target the save uses', async () =
   // A pick for another provider's model only becomes that provider's default.
   assert.equal(result.current.savesPickOnSession('codex'), false);
 
-  // As in ChatInterface: the trigger first, then the effect clearing the chat's id.
+  // As in ChatInterface: the trigger first; the chat's id is cleared a render later.
   rerender({ newSessionTrigger: 1 });
+  // Already in the render between, before the chat's id is gone.
+  assert.equal(result.current.savesPickOnSession('claude'), false);
   rerender({ currentSessionId: null });
   assert.equal(result.current.savesPickOnSession('claude'), false);
 });
 
-test('a project switch during the first reply keeps picks with the chat\'s session, like its next send', async () => {
+test('a project switch during the first reply turns picks into defaults', async () => {
   const { result, rerender, establish } = await renderProviderState(null);
   establish('claude', 'session-new', { model: 'opus' });
 
-  // useChatSessionState keeps the chat's id while that reply runs, and the
-  // composer sends to it; picks go to the same session, not to a default.
+  // useChatSessionState keeps the chat's id while that reply runs, but the
+  // composer now shows the other project's new chat, so picks are its defaults.
   rerender({ selectedProject: { ...project, fullPath: '/other' } });
+  await waitFor(() => {
+    assert.equal(result.current.currentProviderModel, 'opus');
+  });
   act(() => {
     result.current.selectPermissionMode('acceptEdits');
   });
 
-  assert.deepEqual(backend.savedModes[0], ['claude', 'session-new', 'acceptEdits']);
+  assert.equal(result.current.savesPickOnSession('claude'), false);
+  assert.equal(backend.savedModes.length, 0);
 });
