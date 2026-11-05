@@ -534,9 +534,7 @@ export function useChatProviderState({
   // Snapshots for a permission-mode rollback, without making the pick
   // callback change identity on every selection change.
   const permissionModeRef = useRef(permissionMode);
-  permissionModeRef.current = permissionMode;
   const sessionSelectionRef = useRef(sessionSelection);
-  sessionSelectionRef.current = sessionSelection;
 
   /**
    * The session the composer shows, with the provider it runs under: the
@@ -562,15 +560,17 @@ export function useChatProviderState({
       ? { provider, sessionId: seededSession.sessionId }
       : null;
   }, [currentSessionId, newSessionTrigger, provider, seededSession, selectedProjectPath, selectedSessionId]);
-  // The new chat now shown, for telling a send that answers late from a
-  // current one. Written once committed, never from a render React discards.
-  const newChatRef = useRef({ newSessionTrigger, projectPath: selectedProjectPath });
-  useLayoutEffect(() => {
-    newChatRef.current = { newSessionTrigger, projectPath: selectedProjectPath };
-  }, [newSessionTrigger, selectedProjectPath]);
+  // The chat now shown, for telling a send that answers late from a current one.
+  const newChatRef = useRef({ newSessionTrigger, projectPath: selectedProjectPath, sessionId: selectedSessionId });
   // For callbacks, which should not change identity with every target change.
   const composerSessionRef = useRef(composerSession);
-  composerSessionRef.current = composerSession;
+  // Callbacks run after commit; written then, never from a render React discards.
+  useLayoutEffect(() => {
+    permissionModeRef.current = permissionMode;
+    sessionSelectionRef.current = sessionSelection;
+    newChatRef.current = { newSessionTrigger, projectPath: selectedProjectPath, sessionId: selectedSessionId };
+    composerSessionRef.current = composerSession;
+  });
 
   const isComposerTarget = useCallback((sessionId: string) => (
     composerSessionRef.current?.sessionId === sessionId
@@ -1054,11 +1054,13 @@ export function useChatProviderState({
     newSessionTrigger: number | undefined;
   }) => {
     const normalizedProjectPath = projectPath?.trim() || null;
-    // A send that answers after its chat was left seeds nothing: neither the
+    // A send that answers after its chat was left (New Session, another
+    // project, or an existing session opened) seeds nothing: neither the
     // target nor the selection of the chat now shown.
     if (
       sendNewSessionTrigger !== newChatRef.current.newSessionTrigger
       || normalizedProjectPath !== newChatRef.current.projectPath
+      || newChatRef.current.sessionId !== null
     ) {
       return;
     }

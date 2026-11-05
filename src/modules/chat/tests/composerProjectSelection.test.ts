@@ -557,3 +557,18 @@ test('a send that answers late does not replace the current chat\'s created sess
 
   assert.deepEqual(backend.savedModes, [['claude', 'session-b', 'plan']]);
 });
+
+test('a send that answers after an existing session was opened leaves that session\'s selection alone', async () => {
+  const { result } = await renderProviderState(session('session-1'));
+  await waitFor(() => {
+    assert.equal(result.current.permissionMode, 'plan');
+  });
+
+  act(() => {
+    result.current.seedSessionSelection({
+      provider: 'claude', sessionId: 'session-a', selection: { permissionMode: 'acceptEdits' }, projectPath: '/repo', newSessionTrigger: 0,
+    });
+  });
+
+  assert.equal(result.current.permissionMode, 'plan');
+});
