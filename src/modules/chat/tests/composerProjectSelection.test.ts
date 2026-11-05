@@ -559,16 +559,25 @@ test('a send that answers late does not replace the current chat\'s created sess
 });
 
 test('a send that answers after an existing session was opened leaves that session\'s selection alone', async () => {
+  backend.row = { model: 'sonnet', effort: 'low', permissionMode: 'plan' };
   const { result } = await renderProviderState(session('session-1'));
   await waitFor(() => {
     assert.equal(result.current.permissionMode, 'plan');
   });
+  const effortBefore = result.current.currentProviderEffort;
 
   act(() => {
     result.current.seedSessionSelection({
-      provider: 'claude', sessionId: 'session-a', selection: { permissionMode: 'acceptEdits' }, projectPath: '/repo', newSessionTrigger: 0,
+      provider: 'claude',
+      sessionId: 'session-a',
+      selection: { model: 'opus', effort: 'high', permissionMode: 'acceptEdits' },
+      projectPath: '/repo',
+      newSessionTrigger: 0,
     });
   });
 
   assert.equal(result.current.permissionMode, 'plan');
+  assert.equal(result.current.currentProviderModel, 'sonnet');
+  assert.equal(result.current.currentProviderEffort, effortBefore);
+  assert.equal(result.current.savesPickOnSession('claude'), true, 'the open session stays the target');
 });
