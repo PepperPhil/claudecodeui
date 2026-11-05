@@ -562,8 +562,8 @@ export function useChatProviderState({
       ? { provider, sessionId: seededSession.sessionId }
       : null;
   }, [currentSessionId, newSessionTrigger, provider, seededSession, selectedProjectPath, selectedSessionId]);
-  const newChatRef = useRef({ newSessionTrigger, projectPath: selectedProjectPath });
-  newChatRef.current = { newSessionTrigger, projectPath: selectedProjectPath };
+  const newSessionTriggerRef = useRef(newSessionTrigger);
+  newSessionTriggerRef.current = newSessionTrigger;
   // For callbacks, which should not change identity with every target change.
   const composerSessionRef = useRef(composerSession);
   composerSessionRef.current = composerSession;
@@ -1038,10 +1038,17 @@ export function useChatProviderState({
     targetProvider: LLMProvider,
     sessionId: string,
     selection: SessionEstablishedContext['selection'] = {},
+    // The project the send was made in, not the one shown when it answers.
+    projectPath: string | null = null,
   ) => {
     const read = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null);
     // Takes effect with the render that also gives the chat this id.
-    setSeededSession({ provider: targetProvider, sessionId, ...newChatRef.current });
+    setSeededSession({
+      provider: targetProvider,
+      sessionId,
+      newSessionTrigger: newSessionTriggerRef.current,
+      projectPath: projectPath?.trim() || null,
+    });
     setSessionSelection({
       provider: targetProvider,
       sessionId,

@@ -125,7 +125,7 @@ const renderProviderState = async (initialSession: ProjectSession | null) => {
     selection: { model?: string; effort?: string; permissionMode?: string } = {},
   ) => {
     act(() => {
-      hook.result.current.seedSessionSelection(provider, sessionId, selection);
+      hook.result.current.seedSessionSelection(provider, sessionId, selection, props.selectedProject.fullPath);
     });
     rerender({ currentSessionId: sessionId });
   };
@@ -318,6 +318,10 @@ test('a New Session click forgets the session the previous new chat created', as
   act(() => {
     result.current.selectPermissionMode('plan');
   });
+  rerender({ currentSessionId: null });
+  act(() => {
+    result.current.selectPermissionMode('acceptEdits');
+  });
 
   assert.equal(backend.savedModes.length, 0);
 });
@@ -485,4 +489,19 @@ test('a project switch during the first reply turns picks into defaults', async 
 
   assert.equal(result.current.savesPickOnSession('claude'), false);
   assert.equal(backend.savedModes.length, 0);
+  // Not lost: it is the provider's default for the new chat.
+  assert.equal(localStorage.getItem('permissionMode-last-claude'), 'acceptEdits');
+});
+
+test('a session created after a project switch stays with the project its send was made in', async () => {
+  const { result, rerender } = await renderProviderState(null);
+
+  // The send started in /repo; the user switched to /other before it answered.
+  rerender({ selectedProject: { ...project, fullPath: '/other' } });
+  act(() => {
+    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' }, '/repo');
+  });
+  rerender({ currentSessionId: 'session-new' });
+
+  assert.equal(result.current.savesPickOnSession('claude'), false);
 });
