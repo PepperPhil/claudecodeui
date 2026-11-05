@@ -51,7 +51,12 @@ vi.mock('@/shared/api', () => ({
         data: provider === 'claude'
           ? {
             models: {
-              OPTIONS: [{ value: 'sonnet', label: 'Sonnet' }, { value: 'opus', label: 'Opus' }],
+              // Effort levels, so effort assertions see real values, not the default.
+              OPTIONS: ['sonnet', 'opus'].map((value) => ({
+                value,
+                label: value,
+                effort: { values: [{ value: 'low' }, { value: 'high' }] },
+              })),
               DEFAULT: 'sonnet',
             },
           }
@@ -359,11 +364,12 @@ test('a refused mode save takes the mode back', async () => {
 
 test('a failed effort save rolls back only the effort', async () => {
   backend.failEffort = true;
+  backend.row = { model: 'sonnet', effort: 'low', permissionMode: 'plan' };
   const { result } = await renderProviderState(session('session-1'));
   await waitFor(() => {
     assert.equal(result.current.permissionMode, 'plan');
+    assert.equal(result.current.currentProviderEffort, 'low');
   });
-  const effortBefore = result.current.currentProviderEffort;
 
   await act(async () => {
     const pending = result.current.selectProviderEffort('claude', 'high');
@@ -373,7 +379,7 @@ test('a failed effort save rolls back only the effort', async () => {
   });
 
   assert.equal(result.current.permissionMode, 'acceptEdits');
-  assert.equal(result.current.currentProviderEffort, effortBefore);
+  assert.equal(result.current.currentProviderEffort, 'low');
 });
 
 test('a failed load keeps a seed only when it belongs to the session\'s provider', async () => {
@@ -559,25 +565,31 @@ test('a send that answers late does not replace the current chat\'s created sess
 });
 
 test('a send that answers after an existing session was opened leaves that session\'s selection alone', async () => {
-  backend.row = { model: 'sonnet', effort: 'low', permissionMode: 'plan' };
+  // Unlike the catalog default (sonnet) and unlike the late send's values.
+  backend.row = { model: 'opus', effort: 'low', permissionMode: 'plan' };
   const { result } = await renderProviderState(session('session-1'));
   await waitFor(() => {
+    assert.equal(result.current.currentProviderModel, 'opus');
+    assert.equal(result.current.currentProviderEffort, 'low');
     assert.equal(result.current.permissionMode, 'plan');
   });
-  const effortBefore = result.current.currentProviderEffort;
 
   act(() => {
     result.current.seedSessionSelection({
       provider: 'claude',
       sessionId: 'session-a',
-      selection: { model: 'opus', effort: 'high', permissionMode: 'acceptEdits' },
+      selection: { model: 'sonnet', effort: 'high', permissionMode: 'acceptEdits' },
       projectPath: '/repo',
       newSessionTrigger: 0,
     });
   });
 
+  assert.equal(result.current.currentProviderModel, 'opus');
+  assert.equal(result.current.currentProviderEffort, 'low');
   assert.equal(result.current.permissionMode, 'plan');
-  assert.equal(result.current.currentProviderModel, 'sonnet');
-  assert.equal(result.current.currentProviderEffort, effortBefore);
-  assert.equal(result.current.savesPickOnSession('claude'), true, 'the open session stays the target');
+  // Picks still go to the open session.
+  act(() => {
+    result.current.selectPermissionMode('acceptEdits');
+  });
+  assert.deepEqual(backend.savedModes, [['claude', 'session-1', 'acceptEdits']]);
 });
