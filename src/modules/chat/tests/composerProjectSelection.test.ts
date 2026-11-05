@@ -344,9 +344,11 @@ test('a failed effort save rolls back only the effort', async () => {
   assert.equal(result.current.currentProviderEffort, effortBefore);
 });
 
-test('a failed load keeps what the new chat seeded for its session', async () => {
+test('a failed load keeps a seed only when it belongs to the session\'s provider', async () => {
   const { api } = await import('@/shared/api');
-  vi.spyOn(api.providers, 'sessionActiveModel').mockRejectedValueOnce(new Error('offline'));
+  const loadFailed = vi.spyOn(console, 'error').mockImplementation(() => {});
+  vi.spyOn(api.providers, 'sessionActiveModel').mockRejectedValue(new Error('offline'));
+  localStorage.setItem('claude-model', 'sonnet');
   const { result, rerender } = await renderProviderState(null);
   await waitFor(() => {
     assert.equal(result.current.currentProviderModel, 'opus');
@@ -356,13 +358,22 @@ test('a failed load keeps what the new chat seeded for its session', async () =>
     result.current.seedSessionSelection('claude', 'session-new', { model: 'opus', permissionMode: 'acceptEdits' });
   });
   rerender({ selectedSession: session('session-new') });
-
   await waitFor(() => {
-    assert.equal(vi.mocked(api.providers.sessionActiveModel).mock.calls.length, 1);
-  });
-  await act(async () => {
-    await Promise.resolve();
+    assert.ok(loadFailed.mock.calls.some(([message]) => String(message).includes('Error loading the session')));
   });
   assert.equal(result.current.currentProviderModel, 'opus');
   assert.equal(result.current.permissionMode, 'acceptEdits');
+
+  // A seed under another provider is not this session's and is replaced.
+  loadFailed.mockClear();
+  rerender({ selectedSession: null });
+  act(() => {
+    result.current.seedSessionSelection('codex', 'session-other', { model: 'opus' });
+  });
+  rerender({ selectedSession: session('session-other') });
+  await waitFor(() => {
+    assert.ok(loadFailed.mock.calls.some(([message]) => String(message).includes('Error loading the session')));
+  });
+  assert.equal(result.current.currentProviderModel, 'sonnet');
+  loadFailed.mockRestore();
 });

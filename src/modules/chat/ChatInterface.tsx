@@ -413,7 +413,8 @@ function ChatInterface({
   // open, is recorded against that session so reopening it restores this model.
   const handleSelectComposerModel = useCallback(async (model: string) => {
     try {
-      await selectProviderModel(provider, model, currentSessionId || selectedSession?.id || null);
+      // The selected session first: currentSessionId can still name the previous one.
+      await selectProviderModel(provider, model, selectedSession?.id || currentSessionId || null);
     } catch (error) {
       console.error('Error changing the active session model:', error);
     }
@@ -428,7 +429,7 @@ function ChatInterface({
 
   const handleSelectComposerEffort = useCallback(async (effort: string) => {
     try {
-      await selectProviderEffort(provider, effort, currentSessionId || selectedSession?.id || null);
+      await selectProviderEffort(provider, effort, selectedSession?.id || currentSessionId || null);
     } catch (error) {
       console.error('Error changing the active session reasoning effort:', error);
     }
@@ -626,7 +627,7 @@ function ChatInterface({
         providerModelActions={providerModelActions}
         activeProvider={provider}
         activeProviderModel={currentProviderModel}
-        currentSessionId={currentSessionId || selectedSession?.id || null}
+        currentSessionId={selectedSession?.id || currentSessionId || null}
         onSelectProviderModel={selectProviderModel}
       />
     </PermissionContext.Provider>
