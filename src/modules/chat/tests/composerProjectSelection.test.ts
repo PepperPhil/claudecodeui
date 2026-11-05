@@ -80,6 +80,10 @@ test('a new chat starts from the project selection until the user picks', async 
     assert.equal(result.current.currentProviderModel, 'opus');
     assert.equal(result.current.permissionMode, 'acceptEdits');
   });
+  // Applied as the per-provider default, so it still holds once the first
+  // send gives the chat a session id.
+  assert.equal(localStorage.getItem('claude-model'), 'opus');
+  assert.equal(localStorage.getItem('permissionMode-last-claude'), 'acceptEdits');
 
   act(() => {
     result.current.selectPermissionMode('plan');
@@ -108,5 +112,6 @@ test('an open session restores and saves its backend permission mode', async () 
 
   assert.equal(result.current.permissionMode, 'acceptEdits');
   assert.deepEqual(setSessionActivePermissionMode.mock.calls[0], ['claude', 'session-1', 'acceptEdits']);
-  assert.equal(localStorage.getItem('permissionMode-session-1'), null);
+  // Kept as a synchronous cache for the next open, before the backend answers.
+  assert.equal(localStorage.getItem('permissionMode-session-1'), 'acceptEdits');
 });

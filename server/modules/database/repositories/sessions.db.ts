@@ -466,6 +466,7 @@ export const sessionsDb = {
          FROM sessions
          WHERE project_path = ?
            AND provider = ?
+           AND isArchived = 0
            AND (model IS NOT NULL OR permission_mode IS NOT NULL)
          ORDER BY datetime(COALESCE(updated_at, created_at)) DESC, session_id DESC
          LIMIT 1`
