@@ -158,7 +158,11 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
   // The provider the composer sends under. Held here rather than read from
   // storage per render because switching it has to reset the model menu, the
   // permission mode and the session in one commit.
-  const [provider, setProvider] = useState<LLMProvider>(readSelectedProvider);
+  const [storedProvider, setProvider] = useState<LLMProvider>(readSelectedProvider);
+  // An open session runs under its own provider. Derived rather than synced
+  // by an effect, so nothing ever sees the composer's previous provider for a
+  // render after navigation and saves a selection under the wrong one.
+  const provider = selectedSession?.__provider ?? storedProvider;
   // Every provider's chosen model, not just the active one: switching provider
   // must restore the model that provider was last used with, and the catalogue
   // that validates them arrives asynchronously per provider.
@@ -435,14 +439,15 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     }
   }, [providerEfforts, providerModels, reconcileStoredEffort]);
 
+  // Still remembered, so a new chat after this session starts with its provider.
   useEffect(() => {
-    if (!selectedSession?.__provider || selectedSession.__provider === provider) {
+    if (!selectedSession?.__provider || selectedSession.__provider === storedProvider) {
       return;
     }
 
     setProvider(selectedSession.__provider);
     writeSelectedProvider(selectedSession.__provider);
-  }, [provider, selectedSession]);
+  }, [storedProvider, selectedSession]);
 
   // Permission prompts belong to a session, not to the transient provider
   // selection that is synchronized after navigation.
@@ -498,8 +503,6 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
   const seededSessionRef = useRef<{ provider: LLMProvider; sessionId: string } | null>(null);
   const selectedSessionIdRef = useRef(selectedSessionId);
   selectedSessionIdRef.current = selectedSessionId;
-  const selectedSessionProviderRef = useRef(selectedSessionProvider);
-  selectedSessionProviderRef.current = selectedSessionProvider;
   // Selection saves still in flight per session id, each with the field it
   // writes, and a count of all saves ever started. A load of a session waits
   // for its saves and reads again when any save started during its read, so
@@ -514,26 +517,10 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
   const sessionSelectionRef = useRef(sessionSelection);
   sessionSelectionRef.current = sessionSelection;
 
-  /**
-   * Whether a session is the one the composer shows: the selected one, or the
-   * one this new chat just created. By id only: the composer's provider can
-   * briefly lag the session's, and the load that follows reads the saved row.
-   */
+  /** Whether a session is the one the composer shows: the selected one, or the one this new chat just created. */
   const isComposerTarget = useCallback((sessionId: string) => (
     selectedSessionIdRef.current === sessionId || seededSessionRef.current?.sessionId === sessionId
   ), []);
-
-  /**
-   * The provider a session runs under. Callers pass the composer's, which can
-   * briefly lag the selected session's, so the session's own one wins.
-   */
-  const resolveSessionProvider = useCallback((sessionId: string, fallback: LLMProvider): LLMProvider => {
-    if (selectedSessionIdRef.current === sessionId) {
-      return selectedSessionProviderRef.current;
-    }
-    const seeded = seededSessionRef.current;
-    return seeded?.sessionId === sessionId ? seeded.provider : fallback;
-  }, []);
 
   const trackSessionSave = useCallback(<T>(
     sessionId: string,
@@ -556,32 +543,16 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
   }, []);
 
   /**
-   * Resolves once no selection save for a session is in flight, once the load
-   * is cancelled, or after SESSION_SAVE_WAIT_MS, so one hung request cannot
-   * hold the load forever.
+   * Resolves once no selection save for a session is in flight, or as soon as
+   * `stop` settles (the load's deadline or its cancellation).
    */
-  const waitForSessionSaves = useCallback(async (sessionId: string, cancelled: Promise<void>) => {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const deadline = new Promise<'timeout'>((resolve) => {
-      timer = setTimeout(() => resolve('timeout'), SESSION_SAVE_WAIT_MS);
-    });
-    try {
-      for (;;) {
-        const saves = pendingSessionSavesRef.current.get(sessionId);
-        if (!saves) {
-          return;
-        }
-        const outcome = await Promise.race([
-          Promise.allSettled([...saves.keys()]),
-          deadline,
-          cancelled.then(() => 'cancelled' as const),
-        ]);
-        if (outcome === 'timeout' || outcome === 'cancelled') {
-          return;
-        }
+  const waitForSessionSaves = useCallback(async (sessionId: string, stop: Promise<unknown>) => {
+    const stopped = stop.then(() => true);
+    for (;;) {
+      const saves = pendingSessionSavesRef.current.get(sessionId);
+      if (!saves || await Promise.race([Promise.allSettled([...saves.keys()]).then(() => false), stopped])) {
+        return;
       }
-    } finally {
-      clearTimeout(timer);
     }
   }, []);
 
@@ -683,7 +654,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
       ? { provider: selectedSessionProvider, sessionId: selectedSessionId }
       : seededSessionRef.current;
     const previousComposerMode = permissionModeRef.current;
-    const lastModeKey = `permissionMode-last-${target?.provider ?? provider}`;
+    const lastModeKey = `permissionMode-last-${provider}`;
     const previousLastMode = localStorage.getItem(lastModeKey);
     setPermissionMode(nextMode);
 
@@ -701,9 +672,11 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     const currentSelection = sessionSelectionRef.current;
     const previousMode = currentSelection?.sessionId === target.sessionId ? currentSelection.permissionMode : null;
     localStorage.setItem(storageKey, nextMode);
-    setSessionSelection((current) => (
-      current?.sessionId === target.sessionId ? { ...current, permissionMode: nextMode } : current
-    ));
+    // Also before the session's own row has loaded, so a load that has to
+    // keep this field (its save still running) has a value to keep.
+    setSessionSelection((current) => (current?.sessionId === target.sessionId
+      ? { ...current, permissionMode: nextMode }
+      : { provider: target.provider, sessionId: target.sessionId, model: null, effort: null, permissionMode: nextMode }));
     // A save the server refuses (also a mode the session's provider does not
     // offer) is taken back, so the composer never shows a mode the row lacks.
     const rollBack = (reason: unknown) => {
@@ -770,10 +743,14 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
       return;
     }
 
-    let cancelled = false;
-    let cancel: () => void = () => {};
-    const cancelledSignal = new Promise<void>((resolve) => {
-      cancel = resolve;
+    const abort = new AbortController();
+    const { signal } = abort;
+    // One deadline for the whole load, however often it reads again, so a hung
+    // save delays it by SESSION_SAVE_WAIT_MS at most; cancelling stops it too.
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    const stopWaiting = new Promise<void>((resolve) => {
+      deadlineTimer = setTimeout(resolve, SESSION_SAVE_WAIT_MS);
+      signal.addEventListener('abort', () => resolve(), { once: true });
     });
 
     const loadSessionSelection = async () => {
@@ -783,16 +760,16 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
         let body: SessionSelectionApiResponse;
         let savesBeforeRead: number;
         do {
-          await waitForSessionSaves(selectedSessionId, cancelledSignal);
-          if (cancelled) {
+          await waitForSessionSaves(selectedSessionId, stopWaiting);
+          if (signal.aborted) {
             return;
           }
           savesBeforeRead = startedSessionSavesRef.current;
           const response = await api.providers.sessionActiveModel(targetProvider, selectedSessionId);
           body = (await response.json()) as SessionSelectionApiResponse;
-        } while (!cancelled && startedSessionSavesRef.current !== savesBeforeRead);
+        } while (!signal.aborted && startedSessionSavesRef.current !== savesBeforeRead);
         if (
-          cancelled
+          signal.aborted
           || sessionSelectionLoadRequestIdRef.current !== requestId
           || selectedSessionKeyRef.current !== targetSessionKey
         ) {
@@ -809,7 +786,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
         // field keeps what the composer already shows.
         const stillSaving = new Set(pendingSessionSavesRef.current.get(selectedSessionId)?.values());
         setSessionSelection((current) => {
-          const own = current?.sessionId === selectedSessionId ? current : null;
+          const own = current?.sessionId === selectedSessionId && current.provider === targetProvider ? current : null;
           const resolve = (field: ProjectSelectionField) => (own && stillSaving.has(field) ? own[field] : row[field]);
           return {
             provider: targetProvider,
@@ -821,13 +798,14 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
         });
       } catch (error) {
         if (
-          !cancelled
+          !signal.aborted
           && sessionSelectionLoadRequestIdRef.current === requestId
           && selectedSessionKeyRef.current === targetSessionKey
         ) {
           console.error('Error loading the session model and reasoning effort:', error);
           // Keep what this session already shows (its seed, or a pick).
-          setSessionSelection((current) => (current?.sessionId === selectedSessionId ? current : {
+          setSessionSelection((current) => (
+            current?.sessionId === selectedSessionId && current.provider === targetProvider ? current : {
             provider: targetProvider,
             sessionId: selectedSessionId,
             model: null,
@@ -835,13 +813,15 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
             permissionMode: null,
           }));
         }
+      } finally {
+        clearTimeout(deadlineTimer);
       }
     };
 
     void loadSessionSelection();
     return () => {
-      cancelled = true;
-      cancel();
+      abort.abort();
+      clearTimeout(deadlineTimer);
     };
   }, [selectedSessionId, selectedSessionProvider, waitForSessionSaves]);
 
@@ -867,12 +847,11 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
       return { scope: 'default' as const, model };
     }
 
-    const sessionProvider = resolveSessionProvider(normalizedSessionId, targetProvider);
     const mutationId = sessionModelMutationIdRef.current + 1;
     sessionModelMutationIdRef.current = mutationId;
 
     const response = await trackSessionSave(normalizedSessionId, 'model', api.providers.setSessionActiveModel(
-      sessionProvider,
+      targetProvider,
       normalizedSessionId,
       model,
     ));
@@ -887,7 +866,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
       setSessionSelection((current) => (current?.sessionId === normalizedSessionId
         ? { ...current, model: storedModel }
         : {
-          provider: sessionProvider,
+          provider: targetProvider,
           sessionId: normalizedSessionId,
           model: storedModel,
           effort: body.data?.effort?.trim() || null,
@@ -895,7 +874,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
         }));
     }
     return { scope: 'session' as const, model: storedModel };
-  }, [clearProjectSelectionField, isComposerTarget, resolveSessionProvider, setStoredProviderModel, trackSessionSave]);
+  }, [clearProjectSelectionField, isComposerTarget, setStoredProviderModel, trackSessionSave]);
 
   /**
    * Applies an effort choice optimistically and persists it for the open
@@ -915,19 +894,21 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
       return { scope: 'default' as const, effort };
     }
 
-    const sessionProvider = resolveSessionProvider(normalizedSessionId, targetProvider);
     const mutationId = sessionEffortMutationIdRef.current + 1;
     sessionEffortMutationIdRef.current = mutationId;
     const currentSelection = sessionSelectionRef.current;
     const previousSelection = currentSelection?.sessionId === normalizedSessionId ? currentSelection : null;
 
-    setSessionSelection((current) => (current?.sessionId === normalizedSessionId
-      ? { ...current, effort }
-      : { provider: sessionProvider, sessionId: normalizedSessionId, model: null, effort, permissionMode: null }));
+    // Only the session the composer shows; any other one is just saved.
+    if (isComposerTarget(normalizedSessionId)) {
+      setSessionSelection((current) => (current?.sessionId === normalizedSessionId
+        ? { ...current, effort }
+        : { provider: targetProvider, sessionId: normalizedSessionId, model: null, effort, permissionMode: null }));
+    }
 
     try {
       const response = await trackSessionSave(normalizedSessionId, 'effort', api.providers.setSessionActiveEffort(
-        sessionProvider,
+        targetProvider,
         normalizedSessionId,
         effort,
       ));
@@ -941,7 +922,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
         setSessionSelection((current) => (current?.sessionId === normalizedSessionId
           ? { ...current, effort: storedEffort }
           : {
-            provider: sessionProvider,
+            provider: targetProvider,
             sessionId: normalizedSessionId,
             model: null,
             effort: storedEffort,
@@ -961,7 +942,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
       }
       throw error;
     }
-  }, [clearProjectSelectionField, isComposerTarget, resolveSessionProvider, setStoredProviderEffort, trackSessionSave]);
+  }, [clearProjectSelectionField, isComposerTarget, setStoredProviderEffort, trackSessionSave]);
 
   // The open session's model wins over the per-provider default, so switching
   // sessions shows (and sends) what each session actually runs with. What it

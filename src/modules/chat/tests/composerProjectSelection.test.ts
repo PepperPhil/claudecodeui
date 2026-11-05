@@ -343,3 +343,26 @@ test('a failed effort save rolls back only the effort', async () => {
   assert.equal(result.current.permissionMode, 'acceptEdits');
   assert.equal(result.current.currentProviderEffort, effortBefore);
 });
+
+test('a failed load keeps what the new chat seeded for its session', async () => {
+  const { api } = await import('@/shared/api');
+  vi.spyOn(api.providers, 'sessionActiveModel').mockRejectedValueOnce(new Error('offline'));
+  const { result, rerender } = await renderProviderState(null);
+  await waitFor(() => {
+    assert.equal(result.current.currentProviderModel, 'opus');
+  });
+
+  act(() => {
+    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus', permissionMode: 'acceptEdits' });
+  });
+  rerender({ selectedSession: session('session-new') });
+
+  await waitFor(() => {
+    assert.equal(vi.mocked(api.providers.sessionActiveModel).mock.calls.length, 1);
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  assert.equal(result.current.currentProviderModel, 'opus');
+  assert.equal(result.current.permissionMode, 'acceptEdits');
+});
