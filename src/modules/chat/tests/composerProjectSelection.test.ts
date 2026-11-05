@@ -136,7 +136,7 @@ test('a new chat starts from the project selection until the user picks', async 
     result.current.selectPermissionMode('plan');
   });
   await act(async () => {
-    await result.current.selectProviderModel('claude', 'sonnet', null);
+    await result.current.selectProviderModel('claude', 'sonnet');
   });
 
   assert.equal(result.current.permissionMode, 'plan');
@@ -176,7 +176,7 @@ test('the empty state shows the project model and its own pick replaces it', asy
 
   // The empty-state picker goes through the same pick as the composer.
   await act(async () => {
-    await result.current.selectProviderModel('claude', 'sonnet', null);
+    await result.current.selectProviderModel('claude', 'sonnet');
   });
 
   assert.equal(result.current.currentProviderModel, 'sonnet');
@@ -261,8 +261,8 @@ test('picks made before the new session is selected are read back by its first l
   });
   let modelPick: Promise<unknown> = Promise.resolve();
   act(() => {
-    // The composer passes the new id it already has.
-    modelPick = result.current.selectProviderModel('claude', 'sonnet', 'session-new');
+    // No id: the pick goes to the session the new chat just created.
+    modelPick = result.current.selectProviderModel('claude', 'sonnet');
     result.current.selectPermissionMode('plan');
   });
   assert.deepEqual(backend.savedModes[0], ['claude', 'session-new', 'plan']);
@@ -334,7 +334,7 @@ test('a failed effort save rolls back only the effort', async () => {
   const effortBefore = result.current.currentProviderEffort;
 
   await act(async () => {
-    const pending = result.current.selectProviderEffort('claude', 'high', 'session-1');
+    const pending = result.current.selectProviderEffort('claude', 'high');
     // Picked while the effort save is in flight.
     result.current.selectPermissionMode('acceptEdits');
     await pending.catch(() => {});
@@ -378,7 +378,7 @@ test('a failed load keeps a seed only when it belongs to the session\'s provider
   loadFailed.mockRestore();
 });
 
-test('a provider switch forgets the session the new chat created under the old one', async () => {
+test('after a provider switch, mode picks are not saved on the created session', async () => {
   const { result } = await renderProviderState(null);
 
   act(() => {

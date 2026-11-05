@@ -35,10 +35,10 @@ type CommandResultModalProps = {
   activeProvider: LLMProvider;
   activeProviderModel: string;
   currentSessionId: string | null;
+  /** Saves on the session the composer shows, if any, else only as the default. */
   onSelectProviderModel: (
     provider: LLMProvider,
     model: string,
-    sessionId?: string | null,
   ) => Promise<{
     scope: 'default' | 'session';
     model: string;
@@ -285,7 +285,7 @@ function ModelsContent({
   const handleSelectModel = async (model: string) => {
     setChangingModel(model);
     try {
-      const result = await onSelectProviderModel(currentProvider, model, currentSessionId);
+      const result = await onSelectProviderModel(currentProvider, model);
       if (result.scope === 'session') {
         setPendingSessionModel(result.model);
         setSelectionNotice(`This session now uses ${result.model}.`);

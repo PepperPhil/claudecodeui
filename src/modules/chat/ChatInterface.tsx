@@ -413,21 +413,15 @@ function ChatInterface({
   // open, is recorded against that session so reopening it restores this model.
   const handleSelectComposerModel = useCallback(async (model: string) => {
     try {
-      // No id: the hook saves on the session the composer shows, if any.
       await selectProviderModel(provider, model);
     } catch (error) {
       console.error('Error changing the active session model:', error);
     }
   }, [provider, selectProviderModel]);
 
-  const selectModalProviderModel = useCallback((targetProvider: LLMProvider, model: string) => (
-    selectProviderModel(targetProvider, model)
-  ), [selectProviderModel]);
-
-  // The empty state only shows before a chat has a session, so its pick is a
-  // new-chat pick that also replaces the project's model.
+  // The empty state's pick also replaces the model a new chat takes from its project.
   const selectEmptyStateProviderModel = useCallback((targetProvider: LLMProvider, model: string) => {
-    selectProviderModel(targetProvider, model, null)
+    selectProviderModel(targetProvider, model)
       .catch((error) => console.error('Error changing the new chat model:', error));
   }, [selectProviderModel]);
 
@@ -632,9 +626,7 @@ function ChatInterface({
         activeProvider={provider}
         activeProviderModel={currentProviderModel}
         currentSessionId={selectedSession?.id || currentSessionId || null}
-        // The modal's session id only decides its wording; the save goes to
-        // the composer's session, like a composer pick.
-        onSelectProviderModel={selectModalProviderModel}
+        onSelectProviderModel={selectProviderModel}
       />
     </PermissionContext.Provider>
   );

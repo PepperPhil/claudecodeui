@@ -539,26 +539,13 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
   ), [getComposerSession]);
 
   /**
-   * The session a model or effort pick is saved on: without an id, the
-   * composer's session. A value from another provider's catalog cannot run on
-   * a session of another provider, so then it only becomes a default.
+   * The session a model or effort pick is saved on: the composer's. A value
+   * from another provider's catalog cannot run on it, so then it only becomes
+   * that provider's default.
    */
-  const resolvePickTarget = useCallback((
-    sessionId: string | null | undefined,
-    targetProvider: LLMProvider,
-  ): { provider: LLMProvider; sessionId: string } | null => {
+  const resolvePickTarget = useCallback((targetProvider: LLMProvider) => {
     const composerSession = getComposerSession();
-    const normalizedSessionId = sessionId?.trim();
-    let target = null;
-    if (sessionId === undefined) {
-      target = composerSession;
-    } else if (normalizedSessionId) {
-      target = {
-        provider: composerSession?.sessionId === normalizedSessionId ? composerSession.provider : targetProvider,
-        sessionId: normalizedSessionId,
-      };
-    }
-    return target?.provider === targetProvider ? target : null;
+    return composerSession?.provider === targetProvider ? composerSession : null;
   }, [getComposerSession]);
 
   const trackSessionSave = useCallback(<T>(
@@ -873,29 +860,24 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
    * inherits it, and — when a session is open — is also recorded against that
    * session so reopening it later restores this model.
    */
-  const selectProviderModel = useCallback(async (
-    targetProvider: LLMProvider,
-    model: string,
-    // Omitted: the composer's session; null: no session, only the default.
-    sessionId?: string | null,
-  ) => {
+  const selectProviderModel = useCallback(async (targetProvider: LLMProvider, model: string) => {
     setStoredProviderModel(targetProvider, model);
     // Also when a new chat already has its id but no selected session yet,
     // while the project selection still shows.
     clearProjectSelectionField(targetProvider, 'model');
 
-    const target = resolvePickTarget(sessionId, targetProvider);
+    const target = resolvePickTarget(targetProvider);
     if (!target) {
       return { scope: 'default' as const, model };
     }
-    const normalizedSessionId = target.sessionId;
+    const { sessionId } = target;
 
     const mutationId = sessionModelMutationIdRef.current + 1;
     sessionModelMutationIdRef.current = mutationId;
 
-    const response = await trackSessionSave(normalizedSessionId, 'model', api.providers.setSessionActiveModel(
+    const response = await trackSessionSave(sessionId, 'model', api.providers.setSessionActiveModel(
       targetProvider,
-      normalizedSessionId,
+      sessionId,
       model,
     ));
 
@@ -905,12 +887,12 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     }
 
     const storedModel = body.data?.model?.trim() || model;
-    if (sessionModelMutationIdRef.current === mutationId && isComposerTarget(normalizedSessionId)) {
-      setSessionSelection((current) => (current?.sessionId === normalizedSessionId
+    if (sessionModelMutationIdRef.current === mutationId && isComposerTarget(sessionId)) {
+      setSessionSelection((current) => (current?.sessionId === sessionId
         ? { ...current, model: storedModel }
         : {
           provider: targetProvider,
-          sessionId: normalizedSessionId,
+          sessionId: sessionId,
           model: storedModel,
           effort: body.data?.effort?.trim() || null,
           permissionMode: null,
@@ -924,36 +906,32 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
    * session. Mutation counters keep slower earlier requests from overwriting
    * the latest click.
    */
-  const selectProviderEffort = useCallback(async (
-    targetProvider: LLMProvider,
-    effort: string,
-    sessionId?: string | null,
-  ) => {
+  const selectProviderEffort = useCallback(async (targetProvider: LLMProvider, effort: string) => {
     setStoredProviderEffort(targetProvider, effort);
     clearProjectSelectionField(targetProvider, 'effort');
 
-    const target = resolvePickTarget(sessionId, targetProvider);
+    const target = resolvePickTarget(targetProvider);
     if (!target) {
       return { scope: 'default' as const, effort };
     }
-    const normalizedSessionId = target.sessionId;
+    const { sessionId } = target;
 
     const mutationId = sessionEffortMutationIdRef.current + 1;
     sessionEffortMutationIdRef.current = mutationId;
     const currentSelection = sessionSelectionRef.current;
-    const previousSelection = currentSelection?.sessionId === normalizedSessionId ? currentSelection : null;
+    const previousSelection = currentSelection?.sessionId === sessionId ? currentSelection : null;
 
     // Only the session the composer shows; any other one is just saved.
-    if (isComposerTarget(normalizedSessionId)) {
-      setSessionSelection((current) => (current?.sessionId === normalizedSessionId
+    if (isComposerTarget(sessionId)) {
+      setSessionSelection((current) => (current?.sessionId === sessionId
         ? { ...current, effort }
-        : { provider: targetProvider, sessionId: normalizedSessionId, model: null, effort, permissionMode: null }));
+        : { provider: targetProvider, sessionId: sessionId, model: null, effort, permissionMode: null }));
     }
 
     try {
-      const response = await trackSessionSave(normalizedSessionId, 'effort', api.providers.setSessionActiveEffort(
+      const response = await trackSessionSave(sessionId, 'effort', api.providers.setSessionActiveEffort(
         targetProvider,
-        normalizedSessionId,
+        sessionId,
         effort,
       ));
       const body = (await response.json()) as SessionSelectionApiResponse;
@@ -962,12 +940,12 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
       }
 
       const storedEffort = body.data?.effort?.trim() || effort;
-      if (sessionEffortMutationIdRef.current === mutationId && isComposerTarget(normalizedSessionId)) {
-        setSessionSelection((current) => (current?.sessionId === normalizedSessionId
+      if (sessionEffortMutationIdRef.current === mutationId && isComposerTarget(sessionId)) {
+        setSessionSelection((current) => (current?.sessionId === sessionId
           ? { ...current, effort: storedEffort }
           : {
             provider: targetProvider,
-            sessionId: normalizedSessionId,
+            sessionId: sessionId,
             model: null,
             effort: storedEffort,
             permissionMode: null,
@@ -976,10 +954,10 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
 
       return { scope: 'session' as const, effort: storedEffort };
     } catch (error) {
-      if (sessionEffortMutationIdRef.current === mutationId && isComposerTarget(normalizedSessionId)) {
+      if (sessionEffortMutationIdRef.current === mutationId && isComposerTarget(sessionId)) {
         // Only the effort goes back: a mode or model picked meanwhile stays.
         setSessionSelection((current) => (
-          current?.sessionId === normalizedSessionId && current.effort === effort
+          current?.sessionId === sessionId && current.effort === effort
             ? { ...current, effort: previousSelection?.effort ?? null }
             : current
         ));
