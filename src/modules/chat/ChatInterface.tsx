@@ -413,12 +413,16 @@ function ChatInterface({
   // open, is recorded against that session so reopening it restores this model.
   const handleSelectComposerModel = useCallback(async (model: string) => {
     try {
-      // The selected session first: currentSessionId can still name the previous one.
-      await selectProviderModel(provider, model, selectedSession?.id || currentSessionId || null);
+      // No id: the hook saves on the session the composer shows, if any.
+      await selectProviderModel(provider, model);
     } catch (error) {
       console.error('Error changing the active session model:', error);
     }
-  }, [currentSessionId, provider, selectProviderModel, selectedSession?.id]);
+  }, [provider, selectProviderModel]);
+
+  const selectModalProviderModel = useCallback((targetProvider: LLMProvider, model: string) => (
+    selectProviderModel(targetProvider, model)
+  ), [selectProviderModel]);
 
   // The empty state only shows before a chat has a session, so its pick is a
   // new-chat pick that also replaces the project's model.
@@ -429,11 +433,11 @@ function ChatInterface({
 
   const handleSelectComposerEffort = useCallback(async (effort: string) => {
     try {
-      await selectProviderEffort(provider, effort, selectedSession?.id || currentSessionId || null);
+      await selectProviderEffort(provider, effort);
     } catch (error) {
       console.error('Error changing the active session reasoning effort:', error);
     }
-  }, [currentSessionId, provider, selectProviderEffort, selectedSession?.id]);
+  }, [provider, selectProviderEffort]);
 
   // Mirrors ChatComposer's own visibility check so the message pane can
   // reserve enough bottom space to keep the floating status tab from
@@ -628,7 +632,9 @@ function ChatInterface({
         activeProvider={provider}
         activeProviderModel={currentProviderModel}
         currentSessionId={selectedSession?.id || currentSessionId || null}
-        onSelectProviderModel={selectProviderModel}
+        // The modal's session id only decides its wording; the save goes to
+        // the composer's session, like a composer pick.
+        onSelectProviderModel={selectModalProviderModel}
       />
     </PermissionContext.Provider>
   );

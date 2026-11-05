@@ -393,3 +393,44 @@ test('a provider switch forgets the session the new chat created under the old o
 
   assert.equal(backend.savedModes.length, 0);
 });
+
+test('after a provider switch, model and effort picks are not saved on the created session', async () => {
+  const { api } = await import('@/shared/api');
+  const saveModel = vi.spyOn(api.providers, 'setSessionActiveModel');
+  const saveEffort = vi.spyOn(api.providers, 'setSessionActiveEffort');
+  const { result } = await renderProviderState(null);
+
+  act(() => {
+    result.current.setProvider('codex');
+  });
+  // The session gateway answers after the switch, seeding the old provider.
+  act(() => {
+    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' });
+  });
+  await act(async () => {
+    await result.current.selectProviderModel('codex', 'gpt-5.4');
+    await result.current.selectProviderEffort('codex', 'high');
+    result.current.selectPermissionMode('acceptEdits');
+  });
+
+  assert.equal(saveModel.mock.calls.length, 0);
+  assert.equal(saveEffort.mock.calls.length, 0);
+  assert.equal(backend.savedModes.length, 0);
+});
+
+test('a model from another provider is not saved on the composer session', async () => {
+  const { api } = await import('@/shared/api');
+  const saveModel = vi.spyOn(api.providers, 'setSessionActiveModel');
+  const { result } = await renderProviderState(session('session-1'));
+  await waitFor(() => {
+    assert.equal(backend.reads, 1);
+  });
+
+  let scope: string | undefined;
+  await act(async () => {
+    ({ scope } = await result.current.selectProviderModel('codex', 'gpt-5.4'));
+  });
+
+  assert.equal(scope, 'default');
+  assert.equal(saveModel.mock.calls.length, 0);
+});
