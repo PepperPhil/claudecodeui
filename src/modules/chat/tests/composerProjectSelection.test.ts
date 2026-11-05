@@ -30,6 +30,7 @@ const { okJson, setSessionActivePermissionMode, responses } = vi.hoisted(() => {
         success: true,
         data: { model: 'sonnet', effort: null, source: 'session', permissionMode: 'plan' },
       }),
+      setSessionActiveEffort: () => okJson({ success: true, data: null }),
     },
   };
 });
@@ -55,7 +56,7 @@ vi.mock('@/shared/api', () => ({
       capabilities: () => okJson({ success: true, data: null }),
       sessionActiveModel: () => responses.sessionActiveModel(),
       setSessionActiveModel: () => okJson({ success: true, data: null }),
-      setSessionActiveEffort: () => okJson({ success: true, data: null }),
+      setSessionActiveEffort: () => responses.setSessionActiveEffort(),
       setSessionActivePermissionMode,
       projectSelection: () => responses.projectSelection(),
     },
@@ -287,4 +288,53 @@ test('a New Session click forgets the session the previous new chat created', as
   });
 
   assert.equal(setSessionActivePermissionMode.mock.calls.length, 0);
+});
+
+test('a model picked before the new session is selected survives its first load', async () => {
+  const late = deferred();
+  responses.sessionActiveModel = late.respond;
+  const { useChatProviderState } = await import('@/modules/chat/hooks/useChatProviderState');
+  const { result, rerender } = renderHook(
+    ({ selectedSession }: { selectedSession: ProjectSession | null }) => (
+      useChatProviderState({ selectedSession, selectedProject: project })
+    ),
+    { initialProps: { selectedSession: null as ProjectSession | null } },
+  );
+
+  act(() => {
+    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' });
+  });
+  // The composer passes the new id it already has.
+  await act(async () => {
+    await result.current.selectProviderModel('claude', 'sonnet', 'session-new');
+  });
+
+  rerender({ selectedSession: { id: 'session-new', __provider: 'claude' } as ProjectSession });
+  // The load read the row before the model's save landed.
+  await act(async () => {
+    late.resolve({
+      success: true,
+      data: { model: 'opus', effort: null, source: 'session', permissionMode: null },
+    });
+  });
+
+  assert.equal(result.current.currentProviderModel, 'sonnet');
+});
+
+test('a failed effort save rolls back only the effort', async () => {
+  responses.setSessionActiveEffort = () => Promise.resolve({ ok: false, json: async () => ({ success: false }) });
+  const session = { id: 'session-1', __provider: 'claude' } as ProjectSession;
+  const { result } = await renderProviderState(session);
+  await waitFor(() => {
+    assert.equal(result.current.permissionMode, 'plan');
+  });
+
+  await act(async () => {
+    const pending = result.current.selectProviderEffort('claude', 'high', 'session-1');
+    // Picked while the effort save is in flight.
+    result.current.selectPermissionMode('acceptEdits');
+    await pending.catch(() => {});
+  });
+
+  assert.equal(result.current.permissionMode, 'acceptEdits');
 });
