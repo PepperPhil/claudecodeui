@@ -103,34 +103,6 @@ function ChatInterface({
   }, []);
 
   const {
-    provider,
-    setProvider,
-    providerModels,
-    currentProviderEffort,
-    currentProviderEffortOptions,
-    currentProviderModel,
-    currentProviderModelOptions,
-    permissionMode,
-    pendingPermissionRequests,
-    setPendingPermissionRequests,
-    availablePermissionModes,
-    selectPermissionMode,
-    cyclePermissionMode,
-    providerModelCatalog,
-    providerModelsLoading,
-    providerModelActions,
-    selectProviderModel,
-    seedSessionSelection,
-    selectProviderEffort,
-    resolvePermissionModeForProvider,
-    supportsMessageEditing,
-    supportsSessionForking,
-  } = useChatProviderState({
-    selectedSession,
-    selectedProject,
-  });
-
-  const {
     chatMessages,
     addMessage,
     sessionActivity,
@@ -178,11 +150,41 @@ function ChatInterface({
     sessionStore,
   });
 
+  const {
+    provider,
+    setProvider,
+    providerModels,
+    currentProviderEffort,
+    currentProviderEffortOptions,
+    currentProviderModel,
+    currentProviderModelOptions,
+    permissionMode,
+    pendingPermissionRequests,
+    setPendingPermissionRequests,
+    availablePermissionModes,
+    selectPermissionMode,
+    cyclePermissionMode,
+    providerModelCatalog,
+    providerModelsLoading,
+    providerModelActions,
+    selectProviderModel,
+    seedSessionSelection,
+    selectProviderEffort,
+    resolvePermissionModeForProvider,
+    supportsMessageEditing,
+    supportsSessionForking,
+  } = useChatProviderState({
+    selectedSession,
+    selectedProject,
+    // A new chat has its id before navigation selects its session.
+    activeSessionId: selectedSession?.id || currentSessionId || null,
+  });
+
   // Brand-new conversation: the composer allocated a stable session id via
   // the session gateway before the first send. Record it locally and put it
   // in the URL — this id never changes again, so there is no later handoff.
   const handleSessionEstablished = useCallback<NonNullable<ChatInterfaceProps['onSessionEstablished']>>((sessionId, context) => {
-    seedSessionSelection(context.provider, sessionId);
+    seedSessionSelection(context.provider, sessionId, context.selection);
     setCurrentSessionId(sessionId);
     onSessionEstablished?.(sessionId, context);
     onNavigateToSession?.(sessionId);
@@ -418,12 +420,11 @@ function ChatInterface({
     }
   }, [currentSessionId, provider, selectProviderModel, selectedSession?.id]);
 
-  // The empty state also shows for a session without messages, whose row
-  // already records a model, so its pick goes to that session too.
+  // The empty state only shows before a chat has a session, so its pick is a
+  // new-chat pick that also replaces the project's model.
   const selectEmptyStateProviderModel = useCallback((targetProvider: LLMProvider, model: string) => {
-    selectProviderModel(targetProvider, model, currentSessionId || selectedSession?.id || null)
-      .catch((error) => console.error('Error changing the active session model:', error));
-  }, [currentSessionId, selectProviderModel, selectedSession?.id]);
+    void selectProviderModel(targetProvider, model, null);
+  }, [selectProviderModel]);
 
   const handleSelectComposerEffort = useCallback(async (effort: string) => {
     try {

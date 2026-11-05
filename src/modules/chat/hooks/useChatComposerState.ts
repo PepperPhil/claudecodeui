@@ -1030,6 +1030,7 @@ export function useChatComposerState({
           provider,
           project: selectedProject,
           summary: createdSessionName,
+          selection: sendOptions,
         });
       }
 
@@ -1057,7 +1058,7 @@ export function useChatComposerState({
             content: currentInput,
             attachments: currentAttachments,
             uploadedAttachments,
-            options: buildSendOptions(currentInput),
+            options: sendOptions,
           }, targetSessionId);
           return;
         }
