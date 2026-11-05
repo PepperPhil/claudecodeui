@@ -125,7 +125,13 @@ const renderProviderState = async (initialSession: ProjectSession | null) => {
     selection: { model?: string; effort?: string; permissionMode?: string } = {},
   ) => {
     act(() => {
-      hook.result.current.seedSessionSelection(provider, sessionId, selection, props.selectedProject.fullPath);
+      hook.result.current.seedSessionSelection({
+        provider,
+        sessionId,
+        selection,
+        projectPath: props.selectedProject.fullPath,
+        newSessionTrigger: props.newSessionTrigger,
+      });
     });
     rerender({ currentSessionId: sessionId });
   };
@@ -493,15 +499,36 @@ test('a project switch during the first reply turns picks into defaults', async 
   assert.equal(localStorage.getItem('permissionMode-last-claude'), 'acceptEdits');
 });
 
-test('a session created after a project switch stays with the project its send was made in', async () => {
+test('a session that answers after a project switch or New Session stays with its send', async () => {
   const { result, rerender } = await renderProviderState(null);
-
-  // The send started in /repo; the user switched to /other before it answered.
-  rerender({ selectedProject: { ...project, fullPath: '/other' } });
-  act(() => {
-    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' }, '/repo');
+  const seed = (projectPath: string, newSessionTrigger: number) => act(() => {
+    result.current.seedSessionSelection({
+      provider: 'claude',
+      sessionId: 'session-new',
+      selection: { model: 'opus' },
+      projectPath,
+      newSessionTrigger,
+    });
   });
-  rerender({ currentSessionId: 'session-new' });
+  const pickMode = (mode: 'plan' | 'acceptEdits') => act(() => {
+    result.current.selectPermissionMode(mode);
+  });
 
+  // Control: the send's own project and trigger, so the session is the target.
+  seed('/repo', 0);
+  rerender({ currentSessionId: 'session-new' });
+  pickMode('plan');
+  assert.deepEqual(backend.savedModes, [['claude', 'session-new', 'plan']]);
+
+  // The send was made in /repo, but the user is in /other when it answers.
+  rerender({ selectedProject: { ...project, fullPath: '/other' } });
+  seed('/repo', 0);
+  pickMode('acceptEdits');
+  // The send was made before a New Session click.
+  rerender({ selectedProject: project, newSessionTrigger: 1 });
+  seed('/repo', 0);
+  pickMode('acceptEdits');
+
+  assert.equal(backend.savedModes.length, 1);
   assert.equal(result.current.savesPickOnSession('claude'), false);
 });

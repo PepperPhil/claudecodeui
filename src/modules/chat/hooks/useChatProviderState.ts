@@ -562,8 +562,6 @@ export function useChatProviderState({
       ? { provider, sessionId: seededSession.sessionId }
       : null;
   }, [currentSessionId, newSessionTrigger, provider, seededSession, selectedProjectPath, selectedSessionId]);
-  const newSessionTriggerRef = useRef(newSessionTrigger);
-  newSessionTriggerRef.current = newSessionTrigger;
   // For callbacks, which should not change identity with every target change.
   const composerSessionRef = useRef(composerSession);
   composerSessionRef.current = composerSession;
@@ -1034,19 +1032,26 @@ export function useChatProviderState({
    * the composer keeps showing it while the row loads, instead of falling
    * back to the per-provider defaults in between.
    */
-  const seedSessionSelection = useCallback((
-    targetProvider: LLMProvider,
-    sessionId: string,
-    selection: SessionEstablishedContext['selection'] = {},
-    // The project the send was made in, not the one shown when it answers.
-    projectPath: string | null = null,
-  ) => {
+  const seedSessionSelection = useCallback(({
+    provider: targetProvider,
+    sessionId,
+    selection = {},
+    projectPath,
+    newSessionTrigger: sendNewSessionTrigger,
+  }: {
+    provider: LLMProvider;
+    sessionId: string;
+    selection?: SessionEstablishedContext['selection'];
+    /** The project and New Session trigger of the send, not of the moment it answers. */
+    projectPath: string | null;
+    newSessionTrigger: number | undefined;
+  }) => {
     const read = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null);
     // Takes effect with the render that also gives the chat this id.
     setSeededSession({
       provider: targetProvider,
       sessionId,
-      newSessionTrigger: newSessionTriggerRef.current,
+      newSessionTrigger: sendNewSessionTrigger,
       projectPath: projectPath?.trim() || null,
     });
     setSessionSelection({
