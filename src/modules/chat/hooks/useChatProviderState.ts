@@ -42,6 +42,7 @@ const FALLBACK_DEFAULT_MODEL: Record<LLMProvider, string> = {
 const PROVIDERS: LLMProvider[] = ['claude', 'cursor', 'codex', 'opencode'];
 
 type ComposerSession = { provider: LLMProvider; sessionId: string };
+type SeededSession = ComposerSession & { newSessionTrigger: number | undefined; projectPath: string | null };
 
 /**
  * The session a model or effort pick is saved on: the composer's. A value from
@@ -509,9 +510,10 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
   const sessionModel = activeSessionSelection?.model ?? null;
 
   const selectedProjectPath = selectedProject?.fullPath?.trim() || null;
-  // The session this new chat just created, until navigation selects it.
-  // State, not a ref: what the composer targets has to re-render its readers.
-  const [seededSession, setSeededSession] = useState<ComposerSession | null>(null);
+  // The session this new chat just created, until navigation selects it,
+  // with the new chat it belongs to. State, not a ref: what the composer
+  // targets has to re-render its readers.
+  const [seededSession, setSeededSession] = useState<SeededSession | null>(null);
   // Selection saves still in flight per session id, each with the field it
   // writes, and a count of all saves ever started. A load of a session waits
   // for its saves and reads again when any save started during its read, so
@@ -537,21 +539,26 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     if (selectedSessionId) {
       return { provider, sessionId: selectedSessionId };
     }
-    return seededSession?.provider === provider ? seededSession : null;
-  }, [provider, seededSession, selectedSessionId]);
+    // A seed only stands for the new chat it was created in: from the very
+    // render a New Session click or project switch happens, it is ignored.
+    return seededSession
+      && seededSession.provider === provider
+      && seededSession.newSessionTrigger === newSessionTrigger
+      && seededSession.projectPath === selectedProjectPath
+      ? { provider, sessionId: seededSession.sessionId }
+      : null;
+  }, [newSessionTrigger, provider, seededSession, selectedProjectPath, selectedSessionId]);
   // For callbacks, which should not change identity with every target change.
   const composerSessionRef = useRef(composerSession);
   composerSessionRef.current = composerSession;
 
-  const getComposerSession = useCallback(() => composerSessionRef.current, []);
-
   const isComposerTarget = useCallback((sessionId: string) => (
-    getComposerSession()?.sessionId === sessionId
-  ), [getComposerSession]);
+    composerSessionRef.current?.sessionId === sessionId
+  ), []);
 
   const resolvePickTarget = useCallback((targetProvider: LLMProvider) => (
-    pickTargetFor(getComposerSession(), targetProvider)
-  ), [getComposerSession]);
+    pickTargetFor(composerSessionRef.current, targetProvider)
+  ), []);
 
   const trackSessionSave = useCallback(<T>(
     sessionId: string,
@@ -616,12 +623,18 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     : null;
   const projectEffort = projectModel ? activeProjectSelection?.effort ?? null : null;
 
-  // Picks and the created session belong to one new chat; a provider switch
-  // inside it keeps them.
+  // Picks belong to one new chat; a provider switch inside it keeps them.
   useEffect(() => {
     pickedProjectFieldsRef.current = new Set();
-    setSeededSession(null);
   }, [newSessionTrigger, selectedProjectPath, selectedSessionId]);
+
+  // Once a session is selected (it then is the target) the seed has served,
+  // and must not stand for a later view without a session.
+  useEffect(() => {
+    if (selectedSessionId) {
+      setSeededSession(null);
+    }
+  }, [selectedSessionId]);
 
   // A new chat starts from what the project's latest session ran with.
   useEffect(() => {
@@ -693,7 +706,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
   const selectPermissionMode = useCallback((nextMode: PermissionMode) => {
     // A new chat that already has its id but no selected session yet records
     // the pick on that session, so it is not reverted once it is selected.
-    const target = getComposerSession();
+    const target = composerSessionRef.current;
     const previousComposerMode = permissionModeRef.current;
     // The provider of the session the pick is for, which the restore effect
     // reads once that session is selected.
@@ -757,7 +770,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
         })
         .catch(rollBack),
     );
-  }, [clearProjectSelectionField, getComposerSession, isComposerTarget, provider, trackSessionSave]);
+  }, [clearProjectSelectionField, isComposerTarget, provider, trackSessionSave]);
 
   const cyclePermissionMode = useCallback(() => {
     const modes = getPermissionModesForProvider(provider);
@@ -1019,7 +1032,12 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     selection: SessionEstablishedContext['selection'] = {},
   ) => {
     const read = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null);
-    setSeededSession({ provider: targetProvider, sessionId });
+    const seed = { provider: targetProvider, sessionId, newSessionTrigger, projectPath: selectedProjectPath };
+    setSeededSession(seed);
+    // Also right away, for code that runs before the next render.
+    if (!selectedSessionId && targetProvider === provider) {
+      composerSessionRef.current = { provider: targetProvider, sessionId };
+    }
     setSessionSelection({
       provider: targetProvider,
       sessionId,
@@ -1027,7 +1045,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
       effort: read(selection.effort),
       permissionMode: read(selection.permissionMode),
     });
-  }, []);
+  }, [newSessionTrigger, provider, selectedProjectPath, selectedSessionId]);
 
   const currentProviderModelOptions = useMemo(
     () => providerModelCatalog[provider]?.OPTIONS ?? [],

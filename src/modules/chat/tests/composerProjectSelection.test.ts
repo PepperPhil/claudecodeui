@@ -452,3 +452,26 @@ test('savesPickOnSession answers from the same target the save uses', async () =
   rerender({ selectedSession: null, newSessionTrigger: 1 });
   assert.equal(result.current.savesPickOnSession('claude'), false);
 });
+
+test('a pick right after seeding, before any render, already targets the created session', async () => {
+  const { result } = await renderProviderState(null);
+
+  act(() => {
+    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' });
+    result.current.selectPermissionMode('acceptEdits');
+  });
+
+  assert.deepEqual(backend.savedModes[0], ['claude', 'session-new', 'acceptEdits']);
+});
+
+test('in the render a New Session click happens, the old seed is no target', async () => {
+  const { result, rerender } = await renderProviderState(null);
+  act(() => {
+    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' });
+  });
+
+  // Derived from the seed's own new chat, with no effect left to clear it.
+  rerender({ selectedSession: null, newSessionTrigger: 1 });
+
+  assert.equal(result.current.savesPickOnSession('claude'), false);
+});
