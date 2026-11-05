@@ -439,9 +439,12 @@ test('savesPickOnSession answers from the same target the save uses', async () =
   const { result, rerender } = await renderProviderState(null);
   assert.equal(result.current.savesPickOnSession('claude'), false);
 
+  const before = result.current.savesPickOnSession;
   act(() => {
     result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' });
   });
+  // A new function, so a memoized modal re-renders with the new answer.
+  assert.notEqual(result.current.savesPickOnSession, before);
   assert.equal(result.current.savesPickOnSession('claude'), true);
   // A pick for another provider's model only becomes that provider's default.
   assert.equal(result.current.savesPickOnSession('codex'), false);

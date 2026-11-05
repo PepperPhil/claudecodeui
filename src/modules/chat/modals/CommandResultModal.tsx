@@ -280,7 +280,7 @@ function ModelsContent({
     });
   }, [availableOptions, query]);
 
-  // Asked at render, so the answer is as current as the save it predicts.
+  // savesPickOnSession changes with the hook's target, which re-renders this.
   const pickSavesOnSession = savesPickOnSession(currentProvider);
   const showSearch = availableOptions.length > 6;
 

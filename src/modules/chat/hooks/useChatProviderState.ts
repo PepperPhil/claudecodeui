@@ -41,6 +41,17 @@ const FALLBACK_DEFAULT_MODEL: Record<LLMProvider, string> = {
 
 const PROVIDERS: LLMProvider[] = ['claude', 'cursor', 'codex', 'opencode'];
 
+type ComposerSession = { provider: LLMProvider; sessionId: string };
+
+/**
+ * The session a model or effort pick is saved on: the composer's. A value from
+ * another provider's catalog cannot run on it, so then it only becomes that
+ * provider's default. Shared by the save and the /model modal's wording.
+ */
+const pickTargetFor = (session: ComposerSession | null, targetProvider: LLMProvider): ComposerSession | null => (
+  session?.provider === targetProvider ? session : null
+);
+
 /** How long a session load waits for that session's selection saves before reading anyway. */
 const SESSION_SAVE_WAIT_MS = 10_000;
 
@@ -499,9 +510,8 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
 
   const selectedProjectPath = selectedProject?.fullPath?.trim() || null;
   // The session this new chat just created, until navigation selects it.
-  const seededSessionRef = useRef<{ provider: LLMProvider; sessionId: string } | null>(null);
-  const selectedSessionIdRef = useRef(selectedSessionId);
-  selectedSessionIdRef.current = selectedSessionId;
+  // State, not a ref: what the composer targets has to re-render its readers.
+  const [seededSession, setSeededSession] = useState<ComposerSession | null>(null);
   // Selection saves still in flight per session id, each with the field it
   // writes, and a count of all saves ever started. A load of a session waits
   // for its saves and reads again when any save started during its read, so
@@ -516,37 +526,32 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
   const sessionSelectionRef = useRef(sessionSelection);
   sessionSelectionRef.current = sessionSelection;
 
-  const providerRef = useRef(provider);
-  providerRef.current = provider;
-
   /**
    * The session the composer shows, with the provider it runs under: the
    * selected one (whose provider the composer's is), or the one this new chat
-   * just created and navigation has not selected yet.
+   * just created and navigation has not selected yet. After a provider switch
+   * the chat no longer runs under the created session's provider, whether the
+   * switch came before or after it.
    */
-  const getComposerSession = useCallback((): { provider: LLMProvider; sessionId: string } | null => {
-    if (selectedSessionIdRef.current) {
-      return { provider: providerRef.current, sessionId: selectedSessionIdRef.current };
+  const composerSession = useMemo<ComposerSession | null>(() => {
+    if (selectedSessionId) {
+      return { provider, sessionId: selectedSessionId };
     }
-    // After a provider switch the chat no longer runs under the created
-    // session's provider, whether the switch came before or after it.
-    const seeded = seededSessionRef.current;
-    return seeded?.provider === providerRef.current ? seeded : null;
-  }, []);
+    return seededSession?.provider === provider ? seededSession : null;
+  }, [provider, seededSession, selectedSessionId]);
+  // For callbacks, which should not change identity with every target change.
+  const composerSessionRef = useRef(composerSession);
+  composerSessionRef.current = composerSession;
+
+  const getComposerSession = useCallback(() => composerSessionRef.current, []);
 
   const isComposerTarget = useCallback((sessionId: string) => (
     getComposerSession()?.sessionId === sessionId
   ), [getComposerSession]);
 
-  /**
-   * The session a model or effort pick is saved on: the composer's. A value
-   * from another provider's catalog cannot run on it, so then it only becomes
-   * that provider's default.
-   */
-  const resolvePickTarget = useCallback((targetProvider: LLMProvider) => {
-    const composerSession = getComposerSession();
-    return composerSession?.provider === targetProvider ? composerSession : null;
-  }, [getComposerSession]);
+  const resolvePickTarget = useCallback((targetProvider: LLMProvider) => (
+    pickTargetFor(getComposerSession(), targetProvider)
+  ), [getComposerSession]);
 
   const trackSessionSave = useCallback(<T>(
     sessionId: string,
@@ -615,7 +620,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
   // inside it keeps them.
   useEffect(() => {
     pickedProjectFieldsRef.current = new Set();
-    seededSessionRef.current = null;
+    setSeededSession(null);
   }, [newSessionTrigger, selectedProjectPath, selectedSessionId]);
 
   // A new chat starts from what the project's latest session ran with.
@@ -966,10 +971,14 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     }
   }, [clearProjectSelectionField, isComposerTarget, resolvePickTarget, setStoredProviderEffort, trackSessionSave]);
 
-  /** Whether a model pick for a provider is saved on a session, for the /model modal's wording. */
+  /**
+   * Whether a model pick for a provider is saved on a session, for the /model
+   * modal's wording. Bound to the current target, so it changes identity (and
+   * re-renders a memoized reader) whenever the target does.
+   */
   const savesPickOnSession = useCallback((targetProvider: LLMProvider) => (
-    resolvePickTarget(targetProvider) !== null
-  ), [resolvePickTarget]);
+    pickTargetFor(composerSession, targetProvider) !== null
+  ), [composerSession]);
 
   // The open session's model wins over the per-provider default, so switching
   // sessions shows (and sends) what each session actually runs with. What it
@@ -1010,7 +1019,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     selection: SessionEstablishedContext['selection'] = {},
   ) => {
     const read = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null);
-    seededSessionRef.current = { provider: targetProvider, sessionId };
+    setSeededSession({ provider: targetProvider, sessionId });
     setSessionSelection({
       provider: targetProvider,
       sessionId,
