@@ -187,5 +187,8 @@ test('getLatestProjectSelection reads the newest session of that provider in the
       permission_mode: 'acceptEdits',
     });
     assert.equal(sessionsDb.getLatestProjectSelection(project, 'cursor'), null);
+
+    sessionsDb.updateSessionIsArchived('session-new', true);
+    assert.equal(sessionsDb.getLatestProjectSelection(project, 'claude')?.model, 'sonnet');
   });
 });
