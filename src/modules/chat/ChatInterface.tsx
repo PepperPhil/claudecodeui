@@ -120,6 +120,7 @@ function ChatInterface({
     providerModelsLoading,
     providerModelActions,
     selectProviderModel,
+    seedSessionSelection,
     selectProviderEffort,
     resolvePermissionModeForProvider,
     supportsMessageEditing,
@@ -181,10 +182,11 @@ function ChatInterface({
   // the session gateway before the first send. Record it locally and put it
   // in the URL — this id never changes again, so there is no later handoff.
   const handleSessionEstablished = useCallback<NonNullable<ChatInterfaceProps['onSessionEstablished']>>((sessionId, context) => {
+    seedSessionSelection(context.provider, sessionId);
     setCurrentSessionId(sessionId);
     onSessionEstablished?.(sessionId, context);
     onNavigateToSession?.(sessionId);
-  }, [setCurrentSessionId, onSessionEstablished, onNavigateToSession]);
+  }, [seedSessionSelection, setCurrentSessionId, onSessionEstablished, onNavigateToSession]);
 
   const {
     input,
@@ -416,11 +418,12 @@ function ChatInterface({
     }
   }, [currentSessionId, provider, selectProviderModel, selectedSession?.id]);
 
-  // The empty state's picker sets the new chat's model, which also replaces the
-  // model the project's latest session would have started it with.
-  const selectNewChatProviderModel = useCallback((targetProvider: LLMProvider, model: string) => {
-    void selectProviderModel(targetProvider, model, null);
-  }, [selectProviderModel]);
+  // The empty state also shows for a session without messages, whose row
+  // already records a model, so its pick goes to that session too.
+  const selectEmptyStateProviderModel = useCallback((targetProvider: LLMProvider, model: string) => {
+    selectProviderModel(targetProvider, model, currentSessionId || selectedSession?.id || null)
+      .catch((error) => console.error('Error changing the active session model:', error));
+  }, [currentSessionId, selectProviderModel, selectedSession?.id]);
 
   const handleSelectComposerEffort = useCallback(async (effort: string) => {
     try {
@@ -484,7 +487,7 @@ function ChatInterface({
               setProvider={setProvider}
               textareaRef={textareaRef}
               providerModels={providerModels}
-              setProviderModel={selectNewChatProviderModel}
+              setProviderModel={selectEmptyStateProviderModel}
               providerModelCatalog={providerModelCatalog}
               providerModelActions={providerModelActions}
               providerModelsLoading={providerModelsLoading}

@@ -500,15 +500,13 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
     && projectSelection.projectPath === selectedProjectPath
     ? projectSelection
     : null;
-  // A model the catalog no longer lists (a deleted custom model) is not
-  // offered; while the catalog is still loading it cannot be checked yet.
-  const projectCatalog = providerModelCatalog[provider];
+  // Only a model the catalog lists is offered, so a deleted custom model is
+  // never recorded on a new session; the effort only travels with its model.
   const projectModel = activeProjectSelection?.model
-    && (projectCatalog
-      ? projectCatalog.OPTIONS.some((option) => option.value === activeProjectSelection.model)
-      : providerModelsLoading)
+    && providerModelCatalog[provider]?.OPTIONS.some((option) => option.value === activeProjectSelection.model)
     ? activeProjectSelection.model
     : null;
+  const projectEffort = projectModel ? activeProjectSelection?.effort ?? null : null;
 
   // Picks belong to one new chat; a provider switch inside it keeps them.
   useEffect(() => {
@@ -692,10 +690,12 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
     sessionId?: string | null,
   ) => {
     setStoredProviderModel(targetProvider, model);
+    // Also once the new chat has an id but the composer has not switched to
+    // its session yet, while the project selection still shows.
+    clearProjectSelectionField(targetProvider, 'model');
 
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!normalizedSessionId) {
-      clearProjectSelectionField(targetProvider, 'model');
       return { scope: 'default' as const, model };
     }
 
@@ -748,10 +748,10 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
     sessionId?: string | null,
   ) => {
     setStoredProviderEffort(targetProvider, effort);
+    clearProjectSelectionField(targetProvider, 'effort');
 
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!normalizedSessionId) {
-      clearProjectSelectionField(targetProvider, 'effort');
       return { scope: 'default' as const, effort };
     }
 
@@ -834,18 +834,34 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
       provider,
       currentProviderModel,
       activeSessionSelection?.effort
-        ?? activeProjectSelection?.effort
+        ?? projectEffort
         ?? providerEfforts[provider]
         ?? DEFAULT_EFFORT_VALUE,
     );
   }, [
-    activeProjectSelection?.effort,
+    projectEffort,
     activeSessionSelection?.effort,
     currentProviderModel,
     provider,
     providerEfforts,
     reconcileStoredEffort,
   ]);
+
+  /**
+   * Holds what a session was just created with as its recorded selection, so
+   * the composer keeps showing it while the switch to that session loads the
+   * row, instead of falling back to the per-provider defaults in between.
+   */
+  const seedSessionSelection = useCallback((targetProvider: LLMProvider, sessionId: string) => {
+    setSessionSelection({
+      provider: targetProvider,
+      sessionId,
+      model: currentProviderModel,
+      effort: currentProviderEffort,
+      permissionMode,
+    });
+  }, [currentProviderEffort, currentProviderModel, permissionMode]);
+
   const currentProviderModelOptions = useMemo(
     () => providerModelCatalog[provider]?.OPTIONS ?? [],
     [provider, providerModelCatalog],
@@ -996,6 +1012,7 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
     providerModelActions,
     selectProviderModel,
     selectProviderEffort,
+    seedSessionSelection,
     resolvePermissionModeForProvider,
     supportsMessageEditing,
     supportsSessionForking,

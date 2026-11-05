@@ -979,18 +979,19 @@ export function useChatComposerState({
       // BEFORE the first websocket send: brand-new chats allocate one here
       // via the session gateway. There is no client-visible session-id
       // handoff later — this id stays valid for the conversation's lifetime.
+      // Built once: the new session row records the same selection the send carries.
+      const sendOptions = queuedSubmission?.options ?? buildSendOptions(messageContent);
       let targetSessionId = selectedSession?.id || currentSessionId || null;
       if (!targetSessionId) {
         let createdSessionName = sessionSummary;
-        const { model, effort, permissionMode } = queuedSubmission?.options ?? buildSendOptions(messageContent);
         try {
           const response = await api.providers.createSession({
             provider,
             projectPath: resolvedProjectPath,
             initialMessage: messageContent,
-            model,
-            effort,
-            permissionMode,
+            model: sendOptions.model,
+            effort: sendOptions.effort,
+            permissionMode: sendOptions.permissionMode,
           });
           if (!response.ok) {
             throw new Error(`Failed to create session (${response.status})`);
@@ -1099,7 +1100,7 @@ export function useChatComposerState({
         ...(editingAnchorId ? { anchorId: editingAnchorId } : {}),
         content: messageContent,
         options: {
-          ...(queuedSubmission?.options ?? buildSendOptions(messageContent)),
+          ...sendOptions,
           attachments: uploadedAttachments,
         },
       });

@@ -203,3 +203,31 @@ test('the empty state shows the project model and its own pick replaces it', asy
   assert.equal(result.current.currentProviderModel, 'sonnet');
   assert.equal(result.current.providerModels.claude, 'sonnet');
 });
+
+test('a new chat keeps its selection while the switch to its session loads', async () => {
+  localStorage.setItem('claude-model', 'sonnet');
+  localStorage.setItem('permissionMode-last-claude', 'default');
+  const late = deferred();
+  responses.sessionActiveModel = late.respond;
+  const { useChatProviderState } = await import('@/modules/chat/hooks/useChatProviderState');
+  const { result, rerender } = renderHook(
+    ({ selectedSession }: { selectedSession: ProjectSession | null }) => (
+      useChatProviderState({ selectedSession, selectedProject: project })
+    ),
+    { initialProps: { selectedSession: null as ProjectSession | null } },
+  );
+
+  await waitFor(() => {
+    assert.equal(result.current.currentProviderModel, 'opus');
+    assert.equal(result.current.permissionMode, 'acceptEdits');
+  });
+
+  act(() => {
+    result.current.seedSessionSelection('claude', 'session-new');
+  });
+  rerender({ selectedSession: { id: 'session-new', __provider: 'claude' } as ProjectSession });
+
+  // The row has not answered yet; nothing may fall back to sonnet/default.
+  assert.equal(result.current.currentProviderModel, 'opus');
+  assert.equal(result.current.permissionMode, 'acceptEdits');
+});
