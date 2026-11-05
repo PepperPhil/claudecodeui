@@ -103,36 +103,6 @@ function ChatInterface({
   }, []);
 
   const {
-    provider,
-    setProvider,
-    providerModels,
-    currentProviderEffort,
-    currentProviderEffortOptions,
-    currentProviderModel,
-    currentProviderModelOptions,
-    permissionMode,
-    pendingPermissionRequests,
-    setPendingPermissionRequests,
-    availablePermissionModes,
-    selectPermissionMode,
-    cyclePermissionMode,
-    providerModelCatalog,
-    providerModelsLoading,
-    providerModelActions,
-    selectProviderModel,
-    seedSessionSelection,
-    savesPickOnSession,
-    selectProviderEffort,
-    resolvePermissionModeForProvider,
-    supportsMessageEditing,
-    supportsSessionForking,
-  } = useChatProviderState({
-    selectedSession,
-    selectedProject,
-    newSessionTrigger,
-  });
-
-  const {
     chatMessages,
     addMessage,
     sessionActivity,
@@ -178,6 +148,37 @@ function ChatInterface({
     statusCheckSentAtRef,
     lastSeqRef,
     sessionStore,
+  });
+
+  const {
+    provider,
+    setProvider,
+    providerModels,
+    currentProviderEffort,
+    currentProviderEffortOptions,
+    currentProviderModel,
+    currentProviderModelOptions,
+    permissionMode,
+    pendingPermissionRequests,
+    setPendingPermissionRequests,
+    availablePermissionModes,
+    selectPermissionMode,
+    cyclePermissionMode,
+    providerModelCatalog,
+    providerModelsLoading,
+    providerModelActions,
+    selectProviderModel,
+    seedSessionSelection,
+    savesPickOnSession,
+    selectProviderEffort,
+    resolvePermissionModeForProvider,
+    supportsMessageEditing,
+    supportsSessionForking,
+  } = useChatProviderState({
+    selectedSession,
+    selectedProject,
+    newSessionTrigger,
+    currentSessionId,
   });
 
   // Brand-new conversation: the composer allocated a stable session id via

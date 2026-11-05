@@ -42,7 +42,6 @@ const FALLBACK_DEFAULT_MODEL: Record<LLMProvider, string> = {
 const PROVIDERS: LLMProvider[] = ['claude', 'cursor', 'codex', 'opencode'];
 
 type ComposerSession = { provider: LLMProvider; sessionId: string };
-type SeededSession = ComposerSession & { newSessionTrigger: number | undefined; projectPath: string | null };
 
 /**
  * The session a model or effort pick is saved on: the composer's. A value from
@@ -98,6 +97,12 @@ type UseChatProviderStateArgs = {
   selectedProject: Project | null;
   /** Bumped on every New Session click, which starts a new chat even in place. */
   newSessionTrigger?: number;
+  /**
+   * The chat's own session id (useChatSessionState): set when a new chat
+   * creates its session, kept while that first reply runs before navigation
+   * selects it, and cleared on New Session or navigating away.
+   */
+  currentSessionId?: string | null;
 };
 
 type ProviderModelsApiResponse = {
@@ -164,7 +169,12 @@ const getSessionSelectionKey = (provider: LLMProvider, sessionId: string): strin
   `${provider}:${sessionId}`
 );
 
-export function useChatProviderState({ selectedSession, selectedProject, newSessionTrigger }: UseChatProviderStateArgs) {
+export function useChatProviderState({
+  selectedSession,
+  selectedProject,
+  newSessionTrigger,
+  currentSessionId = null,
+}: UseChatProviderStateArgs) {
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
   const [pendingPermissionRequests, setPendingPermissionRequests] = useState<PendingPermissionRequest[]>([]);
   // The provider the composer sends under. Held here rather than read from
@@ -510,10 +520,9 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
   const sessionModel = activeSessionSelection?.model ?? null;
 
   const selectedProjectPath = selectedProject?.fullPath?.trim() || null;
-  // The session this new chat just created, until navigation selects it,
-  // with the new chat it belongs to. State, not a ref: what the composer
-  // targets has to re-render its readers.
-  const [seededSession, setSeededSession] = useState<SeededSession | null>(null);
+  // The session this new chat just created, until navigation selects it.
+  // State, not a ref: what the composer targets has to re-render its readers.
+  const [seededSession, setSeededSession] = useState<ComposerSession | null>(null);
   // Selection saves still in flight per session id, each with the field it
   // writes, and a count of all saves ever started. A load of a session waits
   // for its saves and reads again when any save started during its read, so
@@ -539,15 +548,15 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     if (selectedSessionId) {
       return { provider, sessionId: selectedSessionId };
     }
-    // A seed only stands for the new chat it was created in: from the very
-    // render a New Session click or project switch happens, it is ignored.
+    // A seed stands for the chat only while the chat still holds its id, the
+    // one owner of "this new chat's session"; New Session and navigating away
+    // clear that id in the very render they happen.
     return seededSession
+      && seededSession.sessionId === currentSessionId
       && seededSession.provider === provider
-      && seededSession.newSessionTrigger === newSessionTrigger
-      && seededSession.projectPath === selectedProjectPath
-      ? { provider, sessionId: seededSession.sessionId }
+      ? seededSession
       : null;
-  }, [newSessionTrigger, provider, seededSession, selectedProjectPath, selectedSessionId]);
+  }, [currentSessionId, provider, seededSession, selectedSessionId]);
   // For callbacks, which should not change identity with every target change.
   const composerSessionRef = useRef(composerSession);
   composerSessionRef.current = composerSession;
@@ -628,13 +637,6 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     pickedProjectFieldsRef.current = new Set();
   }, [newSessionTrigger, selectedProjectPath, selectedSessionId]);
 
-  // Once a session is selected (it then is the target) the seed has served,
-  // and must not stand for a later view without a session.
-  useEffect(() => {
-    if (selectedSessionId) {
-      setSeededSession(null);
-    }
-  }, [selectedSessionId]);
 
   // A new chat starts from what the project's latest session ran with.
   useEffect(() => {
@@ -1032,12 +1034,8 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     selection: SessionEstablishedContext['selection'] = {},
   ) => {
     const read = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null);
-    const seed = { provider: targetProvider, sessionId, newSessionTrigger, projectPath: selectedProjectPath };
-    setSeededSession(seed);
-    // Also right away, for code that runs before the next render.
-    if (!selectedSessionId && targetProvider === provider) {
-      composerSessionRef.current = { provider: targetProvider, sessionId };
-    }
+    // Takes effect with the render that also gives the chat this id.
+    setSeededSession({ provider: targetProvider, sessionId });
     setSessionSelection({
       provider: targetProvider,
       sessionId,
@@ -1045,7 +1043,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
       effort: read(selection.effort),
       permissionMode: read(selection.permissionMode),
     });
-  }, [newSessionTrigger, provider, selectedProjectPath, selectedSessionId]);
+  }, []);
 
   const currentProviderModelOptions = useMemo(
     () => providerModelCatalog[provider]?.OPTIONS ?? [],

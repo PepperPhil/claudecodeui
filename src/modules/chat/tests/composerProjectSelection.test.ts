@@ -91,14 +91,43 @@ const gate = () => {
   return { promise, open };
 };
 
+type HookProps = {
+  selectedSession: ProjectSession | null;
+  newSessionTrigger: number;
+  currentSessionId: string | null;
+};
+
+/**
+ * Renders the hook the way ChatInterface feeds it. `rerender` changes only the
+ * props it is given, and `establish` does what ChatInterface does when a new
+ * chat's session is created: seed it and give the chat its id.
+ */
 const renderProviderState = async (initialSession: ProjectSession | null) => {
   const { useChatProviderState } = await import('@/modules/chat/hooks/useChatProviderState');
-  return renderHook(
-    ({ selectedSession, newSessionTrigger }: { selectedSession: ProjectSession | null; newSessionTrigger?: number }) => (
-      useChatProviderState({ selectedSession, selectedProject: project, newSessionTrigger })
-    ),
-    { initialProps: { selectedSession: initialSession, newSessionTrigger: 0 } as { selectedSession: ProjectSession | null; newSessionTrigger?: number } },
+  let props: HookProps = {
+    selectedSession: initialSession,
+    newSessionTrigger: 0,
+    currentSessionId: initialSession?.id ?? null,
+  };
+  const hook = renderHook(
+    (current: HookProps) => useChatProviderState({ ...current, selectedProject: project }),
+    { initialProps: props },
   );
+  const rerender = (next: Partial<HookProps>) => {
+    props = { ...props, ...next };
+    hook.rerender(props);
+  };
+  const establish = (
+    provider: 'claude' | 'codex',
+    sessionId: string,
+    selection: { model?: string; effort?: string; permissionMode?: string } = {},
+  ) => {
+    act(() => {
+      hook.result.current.seedSessionSelection(provider, sessionId, selection);
+    });
+    rerender({ currentSessionId: sessionId });
+  };
+  return { result: hook.result, rerender, establish };
 };
 
 const session = (id: string) => ({ id, __provider: 'claude' }) as ProjectSession;
@@ -228,7 +257,7 @@ test('a new chat keeps its selection while its new session loads', async () => {
   localStorage.setItem('claude-model', 'sonnet');
   localStorage.setItem('permissionMode-last-claude', 'default');
   backend.beforeRead = gate().promise;
-  const { result, rerender } = await renderProviderState(null);
+  const { result, rerender, establish } = await renderProviderState(null);
 
   await waitFor(() => {
     assert.equal(result.current.currentProviderModel, 'opus');
@@ -236,13 +265,7 @@ test('a new chat keeps its selection while its new session loads', async () => {
   });
 
   // The chat gets its id before navigation selects its session.
-  act(() => {
-    result.current.seedSessionSelection('claude', 'session-new', {
-      model: 'opus',
-      effort: 'high',
-      permissionMode: 'acceptEdits',
-    });
-  });
+  establish('claude', 'session-new', { model: 'opus', effort: 'high', permissionMode: 'acceptEdits' });
   rerender({ selectedSession: session('session-new') });
 
   // The row has not answered yet; nothing may fall back to sonnet/default.
@@ -254,11 +277,9 @@ test('picks made before the new session is selected are read back by its first l
   backend.row = { model: 'opus', effort: null, permissionMode: 'acceptEdits' };
   const save = gate();
   backend.beforeSave = save.promise;
-  const { result, rerender } = await renderProviderState(null);
+  const { result, rerender, establish } = await renderProviderState(null);
 
-  act(() => {
-    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus', permissionMode: 'acceptEdits' });
-  });
+  establish('claude', 'session-new', { model: 'opus', permissionMode: 'acceptEdits' });
   let modelPick: Promise<unknown> = Promise.resolve();
   act(() => {
     // No id: the pick goes to the session the new chat just created.
@@ -287,12 +308,10 @@ test('picks made before the new session is selected are read back by its first l
 });
 
 test('a New Session click forgets the session the previous new chat created', async () => {
-  const { result, rerender } = await renderProviderState(null);
+  const { result, rerender, establish } = await renderProviderState(null);
 
-  act(() => {
-    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' });
-  });
-  rerender({ selectedSession: null, newSessionTrigger: 1 });
+  establish('claude', 'session-new', { model: 'opus' });
+  rerender({ newSessionTrigger: 1, currentSessionId: null });
   act(() => {
     result.current.selectPermissionMode('plan');
   });
@@ -349,14 +368,12 @@ test('a failed load keeps a seed only when it belongs to the session\'s provider
   const loadFailed = vi.spyOn(console, 'error').mockImplementation(() => {});
   vi.spyOn(api.providers, 'sessionActiveModel').mockRejectedValue(new Error('offline'));
   localStorage.setItem('claude-model', 'sonnet');
-  const { result, rerender } = await renderProviderState(null);
+  const { result, rerender, establish } = await renderProviderState(null);
   await waitFor(() => {
     assert.equal(result.current.currentProviderModel, 'opus');
   });
 
-  act(() => {
-    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus', permissionMode: 'acceptEdits' });
-  });
+  establish('claude', 'session-new', { model: 'opus', permissionMode: 'acceptEdits' });
   rerender({ selectedSession: session('session-new') });
   await waitFor(() => {
     assert.ok(loadFailed.mock.calls.some(([message]) => String(message).includes('Error loading the session')));
@@ -367,9 +384,7 @@ test('a failed load keeps a seed only when it belongs to the session\'s provider
   // A seed under another provider is not this session's and is replaced.
   loadFailed.mockClear();
   rerender({ selectedSession: null });
-  act(() => {
-    result.current.seedSessionSelection('codex', 'session-other', { model: 'opus' });
-  });
+  establish('codex', 'session-other', { model: 'opus' });
   rerender({ selectedSession: session('session-other') });
   await waitFor(() => {
     assert.ok(loadFailed.mock.calls.some(([message]) => String(message).includes('Error loading the session')));
@@ -379,11 +394,9 @@ test('a failed load keeps a seed only when it belongs to the session\'s provider
 });
 
 test('after a provider switch, mode picks are not saved on the created session', async () => {
-  const { result } = await renderProviderState(null);
+  const { result, establish } = await renderProviderState(null);
 
-  act(() => {
-    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' });
-  });
+  establish('claude', 'session-new', { model: 'opus' });
   act(() => {
     result.current.setProvider('codex');
   });
@@ -398,15 +411,13 @@ test('after a provider switch, model and effort picks are not saved on the creat
   const { api } = await import('@/shared/api');
   const saveModel = vi.spyOn(api.providers, 'setSessionActiveModel');
   const saveEffort = vi.spyOn(api.providers, 'setSessionActiveEffort');
-  const { result } = await renderProviderState(null);
+  const { result, establish } = await renderProviderState(null);
 
   act(() => {
     result.current.setProvider('codex');
   });
   // The session gateway answers after the switch, seeding the old provider.
-  act(() => {
-    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' });
-  });
+  establish('claude', 'session-new', { model: 'opus' });
   await act(async () => {
     await result.current.selectProviderModel('codex', 'gpt-5.4');
     await result.current.selectProviderEffort('codex', 'high');
@@ -436,42 +447,17 @@ test('a model from another provider is not saved on the composer session', async
 });
 
 test('savesPickOnSession answers from the same target the save uses', async () => {
-  const { result, rerender } = await renderProviderState(null);
+  const { result, rerender, establish } = await renderProviderState(null);
   assert.equal(result.current.savesPickOnSession('claude'), false);
 
   const before = result.current.savesPickOnSession;
-  act(() => {
-    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' });
-  });
+  establish('claude', 'session-new', { model: 'opus' });
   // A new function, so a memoized modal re-renders with the new answer.
   assert.notEqual(result.current.savesPickOnSession, before);
   assert.equal(result.current.savesPickOnSession('claude'), true);
   // A pick for another provider's model only becomes that provider's default.
   assert.equal(result.current.savesPickOnSession('codex'), false);
 
-  rerender({ selectedSession: null, newSessionTrigger: 1 });
-  assert.equal(result.current.savesPickOnSession('claude'), false);
-});
-
-test('a pick right after seeding, before any render, already targets the created session', async () => {
-  const { result } = await renderProviderState(null);
-
-  act(() => {
-    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' });
-    result.current.selectPermissionMode('acceptEdits');
-  });
-
-  assert.deepEqual(backend.savedModes[0], ['claude', 'session-new', 'acceptEdits']);
-});
-
-test('in the render a New Session click happens, the old seed is no target', async () => {
-  const { result, rerender } = await renderProviderState(null);
-  act(() => {
-    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' });
-  });
-
-  // Derived from the seed's own new chat, with no effect left to clear it.
-  rerender({ selectedSession: null, newSessionTrigger: 1 });
-
+  rerender({ newSessionTrigger: 1, currentSessionId: null });
   assert.equal(result.current.savesPickOnSession('claude'), false);
 });
