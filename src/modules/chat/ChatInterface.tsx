@@ -376,7 +376,7 @@ function ChatInterface({
   }, [onNavigateToSession, selectedSession?.id]);
 
   const { scheduledMessages, schedule: scheduleMessage, cancel: cancelScheduledMessage } =
-    useScheduledMessages(currentSessionId || selectedSession?.id || null, subscribe);
+    useScheduledMessages(selectedSession?.id || currentSessionId || null, subscribe);
 
   /**
    * Hands the composer's current text to the server to send later, and clears

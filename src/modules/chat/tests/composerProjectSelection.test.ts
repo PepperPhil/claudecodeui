@@ -377,3 +377,19 @@ test('a failed load keeps a seed only when it belongs to the session\'s provider
   assert.equal(result.current.currentProviderModel, 'sonnet');
   loadFailed.mockRestore();
 });
+
+test('a provider switch forgets the session the new chat created under the old one', async () => {
+  const { result } = await renderProviderState(null);
+
+  act(() => {
+    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' });
+  });
+  act(() => {
+    result.current.setProvider('codex');
+  });
+  act(() => {
+    result.current.selectPermissionMode('acceptEdits');
+  });
+
+  assert.equal(backend.savedModes.length, 0);
+});

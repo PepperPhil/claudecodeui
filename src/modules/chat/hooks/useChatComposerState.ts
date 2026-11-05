@@ -480,7 +480,8 @@ export function useChatComposerState({
         const context = {
           projectPath: selectedProject.fullPath || selectedProject.path,
           projectId: selectedProject.projectId,
-          sessionId: currentSessionId || selectedSession?.id || null,
+          // The selected session first: currentSessionId can still name the previous one.
+          sessionId: selectedSession?.id || currentSessionId || null,
           provider,
           model: currentProviderModel,
           tokenUsage: tokenBudget,

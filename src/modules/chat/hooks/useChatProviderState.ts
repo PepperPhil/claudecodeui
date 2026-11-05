@@ -516,20 +516,29 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
   const sessionSelectionRef = useRef(sessionSelection);
   sessionSelectionRef.current = sessionSelection;
 
-  /** Whether a session is the one the composer shows: the selected one, or the one this new chat just created. */
-  const isComposerTarget = useCallback((sessionId: string) => (
-    selectedSessionIdRef.current === sessionId || seededSessionRef.current?.sessionId === sessionId
-  ), []);
+  const providerRef = useRef(provider);
+  providerRef.current = provider;
 
   /**
-   * The provider a save for a session goes out under. The composer's provider
-   * is the selected session's own; a new chat's session not selected yet runs
-   * under the provider it was created with.
+   * The session the composer shows, with the provider it runs under: the
+   * selected one (whose provider the composer's is), or the one this new chat
+   * just created and navigation has not selected yet.
    */
+  const getComposerSession = useCallback((): { provider: LLMProvider; sessionId: string } | null => (
+    selectedSessionIdRef.current
+      ? { provider: providerRef.current, sessionId: selectedSessionIdRef.current }
+      : seededSessionRef.current
+  ), []);
+
+  const isComposerTarget = useCallback((sessionId: string) => (
+    getComposerSession()?.sessionId === sessionId
+  ), [getComposerSession]);
+
+  /** The provider a save for a session goes out under: its own when the composer shows it. */
   const resolveSessionProvider = useCallback((sessionId: string, fallback: LLMProvider): LLMProvider => {
-    const seeded = seededSessionRef.current;
-    return seeded?.sessionId === sessionId && selectedSessionIdRef.current !== sessionId ? seeded.provider : fallback;
-  }, []);
+    const composerSession = getComposerSession();
+    return composerSession?.sessionId === sessionId ? composerSession.provider : fallback;
+  }, [getComposerSession]);
 
   const trackSessionSave = useCallback(<T>(
     sessionId: string,
@@ -553,18 +562,26 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
 
   /** Resolves once no selection save for a session is in flight, or once any of `stops` aborts. */
   const waitForSessionSaves = useCallback(async (sessionId: string, stops: AbortSignal[]) => {
+    let onAbort: () => void = () => {};
     const stopped = new Promise<true>((resolve) => {
-      for (const stop of stops) {
-        if (stop.aborted) {
-          resolve(true);
-        }
-        stop.addEventListener('abort', () => resolve(true), { once: true });
-      }
+      onAbort = () => resolve(true);
     });
-    for (;;) {
-      const saves = pendingSessionSavesRef.current.get(sessionId);
-      if (!saves || await Promise.race([Promise.allSettled([...saves.keys()]).then(() => false), stopped])) {
-        return;
+    for (const stop of stops) {
+      if (stop.aborted) {
+        onAbort();
+      }
+      stop.addEventListener('abort', onAbort, { once: true });
+    }
+    try {
+      for (;;) {
+        const saves = pendingSessionSavesRef.current.get(sessionId);
+        if (!saves || await Promise.race([Promise.allSettled([...saves.keys()]).then(() => false), stopped])) {
+          return;
+        }
+      }
+    } finally {
+      for (const stop of stops) {
+        stop.removeEventListener('abort', onAbort);
       }
     }
   }, []);
@@ -590,8 +607,13 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
   // inside it keeps them.
   useEffect(() => {
     pickedProjectFieldsRef.current = new Set();
-    seededSessionRef.current = null;
   }, [newSessionTrigger, selectedProjectPath, selectedSessionId]);
+
+  // The created session also ends with a provider switch: picks for another
+  // provider are not for a session that runs under this one.
+  useEffect(() => {
+    seededSessionRef.current = null;
+  }, [newSessionTrigger, provider, selectedProjectPath, selectedSessionId]);
 
   // A new chat starts from what the project's latest session ran with.
   useEffect(() => {
@@ -663,9 +685,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
   const selectPermissionMode = useCallback((nextMode: PermissionMode) => {
     // A new chat that already has its id but no selected session yet records
     // the pick on that session, so it is not reverted once it is selected.
-    const target = selectedSessionId
-      ? { provider: provider, sessionId: selectedSessionId }
-      : seededSessionRef.current;
+    const target = getComposerSession();
     const previousComposerMode = permissionModeRef.current;
     // The provider of the session the pick is for, which the restore effect
     // reads once that session is selected.
@@ -729,13 +749,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
         })
         .catch(rollBack),
     );
-  }, [
-    clearProjectSelectionField,
-    isComposerTarget,
-    provider,
-    selectedSessionId,
-    trackSessionSave,
-  ]);
+  }, [clearProjectSelectionField, getComposerSession, isComposerTarget, provider, trackSessionSave]);
 
   const cyclePermissionMode = useCallback(() => {
     const modes = getPermissionModesForProvider(provider);
