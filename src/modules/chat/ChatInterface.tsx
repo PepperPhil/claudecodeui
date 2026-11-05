@@ -121,6 +121,7 @@ function ChatInterface({
     providerModelActions,
     selectProviderModel,
     seedSessionSelection,
+    composerSessionId,
     selectProviderEffort,
     resolvePermissionModeForProvider,
     supportsMessageEditing,
@@ -411,19 +412,15 @@ function ChatInterface({
 
   // A composer pick becomes the default for new chats and, when a session is
   // open, is recorded against that session so reopening it restores this model.
-  const handleSelectComposerModel = useCallback(async (model: string) => {
-    try {
-      await selectProviderModel(provider, model);
-    } catch (error) {
-      console.error('Error changing the active session model:', error);
-    }
-  }, [provider, selectProviderModel]);
-
-  // The empty state's pick also replaces the model a new chat takes from its project.
-  const selectEmptyStateProviderModel = useCallback((targetProvider: LLMProvider, model: string) => {
+  // The empty state picks for any provider, the composer for its own. Either
+  // pick also replaces the model a new chat takes from its project.
+  const pickProviderModel = useCallback((targetProvider: LLMProvider, model: string) => {
     selectProviderModel(targetProvider, model)
-      .catch((error) => console.error('Error changing the new chat model:', error));
+      .catch((error) => console.error('Error changing the active session model:', error));
   }, [selectProviderModel]);
+  const handleSelectComposerModel = useCallback((model: string) => {
+    pickProviderModel(provider, model);
+  }, [pickProviderModel, provider]);
 
   const handleSelectComposerEffort = useCallback(async (effort: string) => {
     try {
@@ -487,7 +484,7 @@ function ChatInterface({
               setProvider={setProvider}
               textareaRef={textareaRef}
               providerModels={providerModels}
-              setProviderModel={selectEmptyStateProviderModel}
+              setProviderModel={pickProviderModel}
               providerModelCatalog={providerModelCatalog}
               providerModelActions={providerModelActions}
               providerModelsLoading={providerModelsLoading}
@@ -625,7 +622,7 @@ function ChatInterface({
         providerModelActions={providerModelActions}
         activeProvider={provider}
         activeProviderModel={currentProviderModel}
-        currentSessionId={selectedSession?.id || currentSessionId || null}
+        currentSessionId={composerSessionId}
         onSelectProviderModel={selectProviderModel}
       />
     </PermissionContext.Provider>

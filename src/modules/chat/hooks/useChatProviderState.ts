@@ -892,7 +892,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
         ? { ...current, model: storedModel }
         : {
           provider: targetProvider,
-          sessionId: sessionId,
+          sessionId,
           model: storedModel,
           effort: body.data?.effort?.trim() || null,
           permissionMode: null,
@@ -925,7 +925,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     if (isComposerTarget(sessionId)) {
       setSessionSelection((current) => (current?.sessionId === sessionId
         ? { ...current, effort }
-        : { provider: targetProvider, sessionId: sessionId, model: null, effort, permissionMode: null }));
+        : { provider: targetProvider, sessionId, model: null, effort, permissionMode: null }));
     }
 
     try {
@@ -945,7 +945,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
           ? { ...current, effort: storedEffort }
           : {
             provider: targetProvider,
-            sessionId: sessionId,
+            sessionId,
             model: null,
             effort: storedEffort,
             permissionMode: null,
@@ -965,6 +965,11 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
       throw error;
     }
   }, [clearProjectSelectionField, isComposerTarget, resolvePickTarget, setStoredProviderEffort, trackSessionSave]);
+
+  // For the /model modal's wording: where a pick of the composer's provider
+  // lands, decided like the save target. Read in render; the seed is set
+  // together with the chat's session id, which re-renders.
+  const composerSessionId = getComposerSession()?.sessionId ?? null;
 
   // The open session's model wins over the per-provider default, so switching
   // sessions shows (and sends) what each session actually runs with. What it
@@ -1166,6 +1171,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     selectProviderModel,
     selectProviderEffort,
     seedSessionSelection,
+    composerSessionId,
     resolvePermissionModeForProvider,
     supportsMessageEditing,
     supportsSessionForking,

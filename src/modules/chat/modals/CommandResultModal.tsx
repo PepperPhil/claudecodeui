@@ -279,7 +279,10 @@ function ModelsContent({
     });
   }, [availableOptions, query]);
 
-  const hasConcreteSessionId = typeof currentSessionId === 'string' && currentSessionId.trim().length > 0;
+  // A pick only lands on the session when it is for the session's provider.
+  const hasConcreteSessionId = typeof currentSessionId === 'string'
+    && currentSessionId.trim().length > 0
+    && currentProvider === activeProvider;
   const showSearch = availableOptions.length > 6;
 
   const handleSelectModel = async (model: string) => {
