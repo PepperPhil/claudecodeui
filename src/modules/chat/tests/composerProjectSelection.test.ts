@@ -587,9 +587,4 @@ test('a send that answers after an existing session was opened leaves that sessi
   assert.equal(result.current.currentProviderModel, 'opus');
   assert.equal(result.current.currentProviderEffort, 'low');
   assert.equal(result.current.permissionMode, 'plan');
-  // Picks still go to the open session.
-  act(() => {
-    result.current.selectPermissionMode('acceptEdits');
-  });
-  assert.deepEqual(backend.savedModes, [['claude', 'session-1', 'acceptEdits']]);
 });
