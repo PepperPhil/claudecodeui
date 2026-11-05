@@ -301,8 +301,12 @@ test('a New Session click forgets the session the previous new chat created', as
 });
 
 test('a refused mode save takes the mode back', async () => {
+  // An older session: no recorded mode, so the per-provider key answers.
+  backend.row.permissionMode = null;
+  localStorage.setItem('permissionMode-last-claude', 'plan');
   const { result } = await renderProviderState(session('session-1'));
   await waitFor(() => {
+    assert.equal(backend.reads, 1);
     assert.equal(result.current.permissionMode, 'plan');
   });
 
@@ -318,6 +322,7 @@ test('a refused mode save takes the mode back', async () => {
     assert.equal(result.current.permissionMode, 'plan');
   });
   assert.equal(localStorage.getItem('permissionMode-session-1'), null);
+  assert.equal(localStorage.getItem('permissionMode-last-claude'), 'plan');
 });
 
 test('a failed effort save rolls back only the effort', async () => {
