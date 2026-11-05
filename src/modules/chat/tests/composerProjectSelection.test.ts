@@ -189,9 +189,15 @@ test('the empty state shows the project model and its own pick replaces it', asy
     assert.equal(result.current.providerModels.claude, 'opus');
   });
 
-  // The empty-state picker writes the per-provider default directly.
+  // Custom-model housekeeping writes the stored default; that is not a pick.
   act(() => {
     result.current.setStoredProviderModel('claude', 'sonnet');
+  });
+  assert.equal(result.current.currentProviderModel, 'opus');
+
+  // The empty-state picker goes through the same pick as the composer.
+  await act(async () => {
+    await result.current.selectProviderModel('claude', 'sonnet', null);
   });
 
   assert.equal(result.current.currentProviderModel, 'sonnet');

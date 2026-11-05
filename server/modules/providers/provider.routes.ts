@@ -937,6 +937,9 @@ router.post(
     const projectPath = typeof body.projectPath === 'string' ? body.projectPath : '';
     const initialMessage = typeof body.initialMessage === 'string' ? body.initialMessage : '';
     const result = sessionsService.createAppSession(provider, projectPath, initialMessage);
+    // The client switches to the new id before its first send records the
+    // selection, so the row has to answer with it from the start.
+    providerModelsService.recordSessionSelection(provider, result.sessionId, body);
     res.status(201).json(createApiSuccessResponse(result));
   }),
 );

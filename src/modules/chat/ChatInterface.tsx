@@ -11,6 +11,7 @@ import { TranscriptSessionContext } from '@/modules/chat/context/TranscriptSessi
 import { api } from '@/shared/api';
 import type {
   ChatMessage,
+  LLMProvider,
   Project,
   ProjectSession,
   SessionEstablishedContext,
@@ -105,7 +106,6 @@ function ChatInterface({
     provider,
     setProvider,
     providerModels,
-    setStoredProviderModel,
     currentProviderEffort,
     currentProviderEffortOptions,
     currentProviderModel,
@@ -416,6 +416,12 @@ function ChatInterface({
     }
   }, [currentSessionId, provider, selectProviderModel, selectedSession?.id]);
 
+  // The empty state's picker sets the new chat's model, which also replaces the
+  // model the project's latest session would have started it with.
+  const selectNewChatProviderModel = useCallback((targetProvider: LLMProvider, model: string) => {
+    void selectProviderModel(targetProvider, model, null);
+  }, [selectProviderModel]);
+
   const handleSelectComposerEffort = useCallback(async (effort: string) => {
     try {
       await selectProviderEffort(provider, effort, currentSessionId || selectedSession?.id || null);
@@ -478,7 +484,7 @@ function ChatInterface({
               setProvider={setProvider}
               textareaRef={textareaRef}
               providerModels={providerModels}
-              setProviderModel={setStoredProviderModel}
+              setProviderModel={selectNewChatProviderModel}
               providerModelCatalog={providerModelCatalog}
               providerModelActions={providerModelActions}
               providerModelsLoading={providerModelsLoading}

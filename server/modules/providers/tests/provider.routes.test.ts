@@ -81,6 +81,31 @@ test('session creation route names a CloudCLI session from the initial message',
   });
 });
 
+test('session creation records the composer selection on the new row', async () => {
+  await withProviderServer(async (baseUrl, workspacePath) => {
+    const response = await fetch(`${baseUrl}/api/providers/sessions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        provider: 'codex',
+        projectPath: workspacePath,
+        initialMessage: 'hello',
+        model: 'gpt-5.4',
+        effort: 'high',
+        // Codex has no plan mode, so this one is not recorded.
+        permissionMode: 'plan',
+      }),
+    });
+    const payload = await response.json() as { data: { sessionId: string } };
+    const row = sessionsDb.getSessionById(payload.data.sessionId);
+
+    assert.equal(response.status, 201);
+    assert.equal(row?.model, 'gpt-5.4');
+    assert.equal(row?.effort, 'high');
+    assert.equal(row?.permission_mode, null);
+  });
+});
+
 test('conversation search streams title matches before transcript results', async () => {
   await withProviderServer(async (baseUrl, workspacePath) => {
     sessionsDb.createAppSession(

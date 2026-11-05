@@ -439,6 +439,10 @@ export const api = {
       provider: string;
       projectPath: string;
       initialMessage?: unknown;
+      // The composer's selection, from the same untyped options a send carries.
+      model?: unknown;
+      effort?: unknown;
+      permissionMode?: unknown;
     }) => post('/api/providers/sessions', payload),
     sessionMessages: (
       sessionId: string,

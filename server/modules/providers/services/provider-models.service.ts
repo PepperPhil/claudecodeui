@@ -465,6 +465,27 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
     return { provider, sessionId: normalizedSessionId, permissionMode, source: 'session' };
   };
 
+  /**
+   * Records the model, effort and permission mode a session runs with, from an
+   * untrusted payload. Blank or missing values are skipped, so a partial
+   * payload never clears what the row already holds.
+   */
+  const recordSessionSelection = (
+    provider: LLMProvider,
+    sessionId: string,
+    selection: { model?: unknown; effort?: unknown; permissionMode?: unknown },
+  ): void => {
+    if (typeof selection.model === 'string' && selection.model.trim()) {
+      setSessionModel(provider, sessionId, selection.model);
+    }
+    if (typeof selection.effort === 'string' && selection.effort.trim()) {
+      setSessionEffort(provider, sessionId, selection.effort);
+    }
+    if (typeof selection.permissionMode === 'string') {
+      setSessionPermissionMode(provider, sessionId, selection.permissionMode);
+    }
+  };
+
   /** The permission mode recorded on one session row, or null when none was. */
   const readSessionPermissionMode = (sessionId: string): string | null => (
     sessions.getSessionById(sessionId.trim())?.permission_mode?.trim() || null
@@ -595,6 +616,7 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
     setSessionModel,
     setSessionEffort,
     setSessionPermissionMode,
+    recordSessionSelection,
     readSessionPermissionMode,
     resolveProjectSelection,
     resolveSessionModel,

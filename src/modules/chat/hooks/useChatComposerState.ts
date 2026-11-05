@@ -982,11 +982,15 @@ export function useChatComposerState({
       let targetSessionId = selectedSession?.id || currentSessionId || null;
       if (!targetSessionId) {
         let createdSessionName = sessionSummary;
+        const { model, effort, permissionMode } = queuedSubmission?.options ?? buildSendOptions(messageContent);
         try {
           const response = await api.providers.createSession({
             provider,
             projectPath: resolvedProjectPath,
             initialMessage: messageContent,
+            model,
+            effort,
+            permissionMode,
           });
           if (!response.ok) {
             throw new Error(`Failed to create session (${response.status})`);

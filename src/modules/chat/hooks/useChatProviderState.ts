@@ -204,27 +204,23 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
     ));
   }, []);
 
-  // Every way of setting a provider's model or effort (composer, empty state,
-  // custom-model edits) is a pick that outranks the project's value.
   const setStoredProviderModel = useCallback((targetProvider: LLMProvider, model: string) => {
-    clearProjectSelectionField(targetProvider, 'model');
     setProviderModels((previous) => (
       previous[targetProvider] === model
         ? previous
         : { ...previous, [targetProvider]: model }
     ));
     localStorage.setItem(providerModelStorageKey(targetProvider), model);
-  }, [clearProjectSelectionField]);
+  }, []);
 
   const setStoredProviderEffort = useCallback((targetProvider: LLMProvider, effort: string) => {
-    clearProjectSelectionField(targetProvider, 'effort');
     setProviderEfforts((previous) => (
       previous[targetProvider] === effort
         ? previous
         : { ...previous, [targetProvider]: effort }
     ));
     localStorage.setItem(`${targetProvider}-effort`, effort);
-  }, [clearProjectSelectionField]);
+  }, []);
 
   const loadProviderModels = useCallback(async () => {
     const requestId = providerModelsRequestIdRef.current + 1;
@@ -496,18 +492,21 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
   // which that load must not revert.
   const sessionPermissionPickRef = useRef<{ key: string; mode: PermissionMode } | null>(null);
 
-  // Applies to a new chat, and after its first send until the new session's
-  // row has loaded; a loaded session falls back to provider defaults as usual.
+  // Only a new chat starts from the project. Its session is created with the
+  // selection it starts from, so once it has an id its own row answers.
   const activeProjectSelection = projectSelection
+    && !selectedSessionId
     && projectSelection.provider === provider
     && projectSelection.projectPath === selectedProjectPath
-    && (!selectedSessionId || !activeSessionSelection)
     ? projectSelection
     : null;
-  // A model the catalog no longer lists (a deleted custom model) is not offered.
+  // A model the catalog no longer lists (a deleted custom model) is not
+  // offered; while the catalog is still loading it cannot be checked yet.
   const projectCatalog = providerModelCatalog[provider];
   const projectModel = activeProjectSelection?.model
-    && (!projectCatalog || projectCatalog.OPTIONS.some((option) => option.value === activeProjectSelection.model))
+    && (projectCatalog
+      ? projectCatalog.OPTIONS.some((option) => option.value === activeProjectSelection.model)
+      : providerModelsLoading)
     ? activeProjectSelection.model
     : null;
 
@@ -696,6 +695,7 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
 
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!normalizedSessionId) {
+      clearProjectSelectionField(targetProvider, 'model');
       return { scope: 'default' as const, model };
     }
 
@@ -735,7 +735,7 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
       }));
     }
     return { scope: 'session' as const, model: storedModel };
-  }, [setStoredProviderModel]);
+  }, [clearProjectSelectionField, setStoredProviderModel]);
 
   /**
    * Applies an effort choice optimistically and persists it for the open
@@ -751,6 +751,7 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
 
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!normalizedSessionId) {
+      clearProjectSelectionField(targetProvider, 'effort');
       return { scope: 'default' as const, effort };
     }
 
@@ -816,7 +817,7 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
       }
       throw error;
     }
-  }, [sessionSelection, setStoredProviderEffort]);
+  }, [clearProjectSelectionField, sessionSelection, setStoredProviderEffort]);
 
   // The open session's model wins over the per-provider default, so switching
   // sessions shows (and sends) what each session actually runs with. What it
@@ -899,6 +900,11 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
     if (providerModels[targetProvider] === existing.value) {
       setStoredProviderModel(targetProvider, result.model.value);
     }
+    setProjectSelection((current) => (
+      current?.provider === targetProvider && current.model === existing.value
+        ? { ...current, model: result.model.value }
+        : current
+    ));
     if (provider === targetProvider && sessionModel === existing.value) {
       setSessionSelection((current) => current ? {
         ...current,
