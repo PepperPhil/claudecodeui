@@ -73,19 +73,7 @@ const other: Project = { projectId: 'p2', displayName: 'other', fullPath: '/work
 const renderChat = () => {
   const upstream = vi.fn();
   const navigate = vi.fn();
-  const view = render(
-    <ChatInterface
-      isActive
-      selectedProject={repo}
-      selectedSession={null}
-      ws={null}
-      sendMessage={() => {}}
-      newSessionTrigger={0}
-      onSessionEstablished={upstream}
-      onNavigateToSession={navigate}
-    />,
-  );
-  const rerender = (props: { selectedProject: Project; newSessionTrigger: number }) => view.rerender(
+  const chat = (props: { selectedProject: Project; newSessionTrigger: number }) => (
     <ChatInterface
       isActive
       selectedProject={props.selectedProject}
@@ -95,9 +83,10 @@ const renderChat = () => {
       newSessionTrigger={props.newSessionTrigger}
       onSessionEstablished={upstream}
       onNavigateToSession={navigate}
-    />,
+    />
   );
-  return { upstream, navigate, rerender };
+  const view = render(chat({ selectedProject: repo, newSessionTrigger: 0 }));
+  return { upstream, navigate, view, rerender: (props: Parameters<typeof chat>[0]) => view.rerender(chat(props)) };
 };
 
 // The context a send in /work/repo under New Session trigger 0 reports.
@@ -111,7 +100,7 @@ beforeEach(() => {
 test('a session whose chat is still shown becomes the chat\'s session', () => {
   const { upstream, navigate } = renderChat();
 
-  harness.onSessionEstablished?.('session-a', sentFromRepo);
+  assert.equal(harness.onSessionEstablished?.('session-a', sentFromRepo), true);
 
   assert.equal(harness.seedSessionSelection.mock.calls.length, 1);
   assert.deepEqual(harness.setCurrentSessionId.mock.calls, [['session-a']]);
@@ -126,14 +115,16 @@ test('a session that answers after New Session or a project switch is only repor
   ]) {
     harness.seedSessionSelection.mockClear();
     harness.setCurrentSessionId.mockClear();
-    const { upstream, navigate, rerender } = renderChat();
+    const { upstream, navigate, view, rerender } = renderChat();
     rerender(shown);
 
-    harness.onSessionEstablished?.('session-a', sentFromRepo);
+    // The composer learns the send no longer belongs on screen.
+    assert.equal(harness.onSessionEstablished?.('session-a', sentFromRepo), false);
 
     assert.equal(harness.seedSessionSelection.mock.calls.length, 0);
     assert.equal(harness.setCurrentSessionId.mock.calls.length, 0);
     assert.equal(navigate.mock.calls.length, 0);
     assert.equal(upstream.mock.calls.length, 1);
+    view.unmount();
   }
 });
