@@ -562,9 +562,6 @@ export function useChatProviderState({
       ? { provider, sessionId: seededSession.sessionId }
       : null;
   }, [currentSessionId, newSessionTrigger, provider, seededSession, selectedProjectPath, selectedSessionId]);
-  // The new chat now shown, for telling a send that answers late from a current one.
-  const newChatRef = useRef({ newSessionTrigger, projectPath: selectedProjectPath });
-  newChatRef.current = { newSessionTrigger, projectPath: selectedProjectPath };
   // For callbacks, which should not change identity with every target change.
   const composerSessionRef = useRef(composerSession);
   composerSessionRef.current = composerSession;
@@ -1050,22 +1047,13 @@ export function useChatProviderState({
     /** The New Session trigger the send started under, not the current one. */
     newSessionTrigger: number | undefined;
   }) => {
-    const normalizedProjectPath = projectPath?.trim() || null;
-    // A send that answers after its chat was left seeds nothing: neither the
-    // target nor the selection of the chat now shown.
-    if (
-      sendNewSessionTrigger !== newChatRef.current.newSessionTrigger
-      || normalizedProjectPath !== newChatRef.current.projectPath
-    ) {
-      return;
-    }
     const read = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null);
     // Takes effect with the render that also gives the chat this id.
     setSeededSession({
       provider: targetProvider,
       sessionId,
       newSessionTrigger: sendNewSessionTrigger,
-      projectPath: normalizedProjectPath,
+      projectPath: projectPath?.trim() || null,
     });
     setSessionSelection({
       provider: targetProvider,

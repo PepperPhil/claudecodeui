@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type {
   ChangeEvent,
   ClipboardEvent,
@@ -289,8 +289,11 @@ export function useChatComposerState({
   const inputValueRef = useRef(input);
   // Read when a send starts, so the established session reports that send's
   // New Session trigger even if the user clicks New Session while it is out.
+  // Written once committed, never from a render React throws away.
   const newSessionTriggerRef = useRef(newSessionTrigger);
-  newSessionTriggerRef.current = newSessionTrigger;
+  useLayoutEffect(() => {
+    newSessionTriggerRef.current = newSessionTrigger;
+  }, [newSessionTrigger]);
   const selectedProjectId = selectedProject?.projectId;
   // Prefer the stable backend-allocated id (selectedSession.id) but fall back
   // to currentSessionId for a just-established session that hasn't been
