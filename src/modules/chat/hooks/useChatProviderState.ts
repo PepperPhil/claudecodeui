@@ -191,23 +191,40 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
   const sessionModelMutationIdRef = useRef(0);
   const sessionEffortMutationIdRef = useRef(0);
 
+  const [projectSelection, setProjectSelection] = useState<ProjectProviderSelection | null>(null);
+  // `provider:field` pairs the user picked in this new chat, which a project
+  // selection that arrives afterwards must leave alone.
+  const pickedProjectFieldsRef = useRef(new Set<string>());
+
+  /** Drops one project value once the user picks that field themselves. */
+  const clearProjectSelectionField = useCallback((targetProvider: LLMProvider, field: ProjectSelectionField) => {
+    pickedProjectFieldsRef.current.add(`${targetProvider}:${field}`);
+    setProjectSelection((current) => (
+      current?.provider === targetProvider && current[field] !== null ? { ...current, [field]: null } : current
+    ));
+  }, []);
+
+  // Every way of setting a provider's model or effort (composer, empty state,
+  // custom-model edits) is a pick that outranks the project's value.
   const setStoredProviderModel = useCallback((targetProvider: LLMProvider, model: string) => {
+    clearProjectSelectionField(targetProvider, 'model');
     setProviderModels((previous) => (
       previous[targetProvider] === model
         ? previous
         : { ...previous, [targetProvider]: model }
     ));
     localStorage.setItem(providerModelStorageKey(targetProvider), model);
-  }, []);
+  }, [clearProjectSelectionField]);
 
   const setStoredProviderEffort = useCallback((targetProvider: LLMProvider, effort: string) => {
+    clearProjectSelectionField(targetProvider, 'effort');
     setProviderEfforts((previous) => (
       previous[targetProvider] === effort
         ? previous
         : { ...previous, [targetProvider]: effort }
     ));
     localStorage.setItem(`${targetProvider}-effort`, effort);
-  }, []);
+  }, [clearProjectSelectionField]);
 
   const loadProviderModels = useCallback(async () => {
     const requestId = providerModelsRequestIdRef.current + 1;
@@ -475,26 +492,29 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
   const sessionModel = activeSessionSelection?.model ?? null;
 
   const selectedProjectPath = selectedProject?.fullPath?.trim() || null;
-  const [projectSelection, setProjectSelection] = useState<ProjectProviderSelection | null>(null);
-  // Fields the user picked in this new chat, which a project selection that
-  // arrives afterwards must leave alone.
-  const pickedProjectFieldsRef = useRef(new Set<ProjectSelectionField>());
   // The mode picked for a session while its recorded selection was loading,
   // which that load must not revert.
   const sessionPermissionPickRef = useRef<{ key: string; mode: PermissionMode } | null>(null);
 
-  // Fills in whatever the open session has not recorded, so it also covers a
-  // new chat after its first send, until the new session's row has loaded.
+  // Applies to a new chat, and after its first send until the new session's
+  // row has loaded; a loaded session falls back to provider defaults as usual.
   const activeProjectSelection = projectSelection
     && projectSelection.provider === provider
     && projectSelection.projectPath === selectedProjectPath
+    && (!selectedSessionId || !activeSessionSelection)
     ? projectSelection
     : null;
   // A model the catalog no longer lists (a deleted custom model) is not offered.
+  const projectCatalog = providerModelCatalog[provider];
   const projectModel = activeProjectSelection?.model
-    && providerModelCatalog[provider]?.OPTIONS.some((option) => option.value === activeProjectSelection.model)
+    && (!projectCatalog || projectCatalog.OPTIONS.some((option) => option.value === activeProjectSelection.model))
     ? activeProjectSelection.model
     : null;
+
+  // Picks belong to one new chat; a provider switch inside it keeps them.
+  useEffect(() => {
+    pickedProjectFieldsRef.current = new Set();
+  }, [selectedProjectPath, selectedSessionId]);
 
   // A new chat starts from what the project's latest session ran with.
   useEffect(() => {
@@ -503,25 +523,31 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
     }
 
     let cancelled = false;
-    pickedProjectFieldsRef.current = new Set();
     const loadProjectSelection = async () => {
       try {
         const response = await api.providers.projectSelection(provider, selectedProjectPath);
         const body = (await response.json()) as ProjectSelectionApiResponse;
-        if (cancelled || !body.success || !body.data) {
+        if (cancelled) {
           return;
         }
-        const picked = pickedProjectFieldsRef.current;
+        if (!body.success || !body.data) {
+          setProjectSelection(null);
+          return;
+        }
+        const unlessPicked = (field: ProjectSelectionField) => (
+          pickedProjectFieldsRef.current.has(`${provider}:${field}`) ? null : body.data?.[field] ?? null
+        );
         setProjectSelection({
           provider,
           projectPath: selectedProjectPath,
-          model: picked.has('model') ? null : body.data.model ?? null,
-          effort: picked.has('effort') ? null : body.data.effort ?? null,
-          permissionMode: picked.has('permissionMode') ? null : body.data.permissionMode ?? null,
+          model: unlessPicked('model'),
+          effort: unlessPicked('effort'),
+          permissionMode: unlessPicked('permissionMode'),
         });
       } catch (error) {
         if (!cancelled) {
           console.error('Error loading the project model and permission mode:', error);
+          setProjectSelection(null);
         }
       }
     };
@@ -531,12 +557,6 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
       cancelled = true;
     };
   }, [provider, selectedProjectPath, selectedSessionId]);
-
-  /** Drops one project value once the user picks that field for the new chat themselves. */
-  const clearProjectSelectionField = useCallback((field: ProjectSelectionField) => {
-    pickedProjectFieldsRef.current.add(field);
-    setProjectSelection((current) => (current && current[field] !== null ? { ...current, [field]: null } : current));
-  }, []);
 
   useEffect(() => {
     const validModes = getPermissionModesForProvider(provider);
@@ -571,7 +591,7 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
     // the real id arrives (and for future sessions of this provider).
     localStorage.setItem(`permissionMode-last-${provider}`, nextMode);
     if (!selectedSessionId || !selectedSessionKey) {
-      clearProjectSelectionField('permissionMode');
+      clearProjectSelectionField(provider, 'permissionMode');
       return;
     }
 
@@ -676,7 +696,6 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
 
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!normalizedSessionId) {
-      clearProjectSelectionField('model');
       return { scope: 'default' as const, model };
     }
 
@@ -716,7 +735,7 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
       }));
     }
     return { scope: 'session' as const, model: storedModel };
-  }, [clearProjectSelectionField, setStoredProviderModel]);
+  }, [setStoredProviderModel]);
 
   /**
    * Applies an effort choice optimistically and persists it for the open
@@ -732,7 +751,6 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
 
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!normalizedSessionId) {
-      clearProjectSelectionField('effort');
       return { scope: 'default' as const, effort };
     }
 
@@ -798,12 +816,15 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
       }
       throw error;
     }
-  }, [clearProjectSelectionField, sessionSelection, setStoredProviderEffort]);
+  }, [sessionSelection, setStoredProviderEffort]);
 
   // The open session's model wins over the per-provider default, so switching
   // sessions shows (and sends) what each session actually runs with. What it
   // has not recorded comes from the project's latest session.
   const currentProviderModel = sessionModel ?? projectModel ?? providerModels[provider];
+  const displayedProviderModels = useMemo(() => (
+    projectModel ? { ...providerModels, [provider]: projectModel } : providerModels
+  ), [projectModel, provider, providerModels]);
   const currentProviderEffortOptions = useMemo(() => {
     return getEffortOptionsForModel(provider, currentProviderModel);
   }, [currentProviderModel, getEffortOptionsForModel, provider]);
@@ -951,7 +972,8 @@ export function useChatProviderState({ selectedSession, selectedProject }: UseCh
   return {
     provider,
     setProvider,
-    providerModels,
+    // The empty state reads this record, so it must show the model that is sent.
+    providerModels: displayedProviderModels,
     setStoredProviderModel,
     currentProviderEffort,
     currentProviderEffortOptions,

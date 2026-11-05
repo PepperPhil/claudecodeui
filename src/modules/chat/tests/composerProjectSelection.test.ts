@@ -180,3 +180,20 @@ test('a mode picked while the session loads survives the late response', async (
   });
   assert.equal(result.current.permissionMode, 'acceptEdits');
 });
+
+test('the empty state shows the project model and its own pick replaces it', async () => {
+  localStorage.setItem('claude-model', 'sonnet');
+  const { result } = await renderProviderState(null);
+
+  await waitFor(() => {
+    assert.equal(result.current.providerModels.claude, 'opus');
+  });
+
+  // The empty-state picker writes the per-provider default directly.
+  act(() => {
+    result.current.setStoredProviderModel('claude', 'sonnet');
+  });
+
+  assert.equal(result.current.currentProviderModel, 'sonnet');
+  assert.equal(result.current.providerModels.claude, 'sonnet');
+});
