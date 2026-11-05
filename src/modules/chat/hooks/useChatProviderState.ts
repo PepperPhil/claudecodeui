@@ -548,9 +548,10 @@ export function useChatProviderState({
     if (selectedSessionId) {
       return { provider, sessionId: selectedSessionId };
     }
-    // A seed stands for the chat only while the chat still holds its id, the
-    // one owner of "this new chat's session"; New Session and navigating away
-    // clear that id in the very render they happen.
+    // A seed stands for the chat only while the chat still holds its id: the
+    // id the composer's next send goes to, so picks land where that send
+    // does. New Session and navigating away clear it in an effect, which
+    // React runs before it handles the next click.
     return seededSession
       && seededSession.sessionId === currentSessionId
       && seededSession.provider === provider
@@ -636,7 +637,6 @@ export function useChatProviderState({
   useEffect(() => {
     pickedProjectFieldsRef.current = new Set();
   }, [newSessionTrigger, selectedProjectPath, selectedSessionId]);
-
 
   // A new chat starts from what the project's latest session ran with.
   useEffect(() => {

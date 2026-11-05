@@ -93,6 +93,7 @@ const gate = () => {
 
 type HookProps = {
   selectedSession: ProjectSession | null;
+  selectedProject: Project;
   newSessionTrigger: number;
   currentSessionId: string | null;
 };
@@ -106,11 +107,12 @@ const renderProviderState = async (initialSession: ProjectSession | null) => {
   const { useChatProviderState } = await import('@/modules/chat/hooks/useChatProviderState');
   let props: HookProps = {
     selectedSession: initialSession,
+    selectedProject: project,
     newSessionTrigger: 0,
     currentSessionId: initialSession?.id ?? null,
   };
   const hook = renderHook(
-    (current: HookProps) => useChatProviderState({ ...current, selectedProject: project }),
+    (current: HookProps) => useChatProviderState(current),
     { initialProps: props },
   );
   const rerender = (next: Partial<HookProps>) => {
@@ -311,7 +313,9 @@ test('a New Session click forgets the session the previous new chat created', as
   const { result, rerender, establish } = await renderProviderState(null);
 
   establish('claude', 'session-new', { model: 'opus' });
-  rerender({ newSessionTrigger: 1, currentSessionId: null });
+  // As in ChatInterface: the trigger first, then the effect clearing the chat's id.
+  rerender({ newSessionTrigger: 1 });
+  rerender({ currentSessionId: null });
   act(() => {
     result.current.selectPermissionMode('plan');
   });
@@ -458,6 +462,22 @@ test('savesPickOnSession answers from the same target the save uses', async () =
   // A pick for another provider's model only becomes that provider's default.
   assert.equal(result.current.savesPickOnSession('codex'), false);
 
-  rerender({ newSessionTrigger: 1, currentSessionId: null });
+  // As in ChatInterface: the trigger first, then the effect clearing the chat's id.
+  rerender({ newSessionTrigger: 1 });
+  rerender({ currentSessionId: null });
   assert.equal(result.current.savesPickOnSession('claude'), false);
+});
+
+test('a project switch during the first reply keeps picks with the chat\'s session, like its next send', async () => {
+  const { result, rerender, establish } = await renderProviderState(null);
+  establish('claude', 'session-new', { model: 'opus' });
+
+  // useChatSessionState keeps the chat's id while that reply runs, and the
+  // composer sends to it; picks go to the same session, not to a default.
+  rerender({ selectedProject: { ...project, fullPath: '/other' } });
+  act(() => {
+    result.current.selectPermissionMode('acceptEdits');
+  });
+
+  assert.deepEqual(backend.savedModes[0], ['claude', 'session-new', 'acceptEdits']);
 });
