@@ -211,10 +211,10 @@ test('a new chat keeps its selection while its new session loads', async () => {
   responses.sessionActiveModel = late.respond;
   const { useChatProviderState } = await import('@/modules/chat/hooks/useChatProviderState');
   const { result, rerender } = renderHook(
-    ({ activeSessionId }: { activeSessionId: string | null }) => (
-      useChatProviderState({ selectedSession: null, selectedProject: project, activeSessionId })
+    ({ selectedSession }: { selectedSession: ProjectSession | null }) => (
+      useChatProviderState({ selectedSession, selectedProject: project })
     ),
-    { initialProps: { activeSessionId: null as string | null } },
+    { initialProps: { selectedSession: null as ProjectSession | null } },
   );
 
   await waitFor(() => {
@@ -230,15 +230,36 @@ test('a new chat keeps its selection while its new session loads', async () => {
       permissionMode: 'acceptEdits',
     });
   });
-  rerender({ activeSessionId: 'session-new' });
-
-  // The row has not answered yet; nothing may fall back to sonnet/default.
-  assert.equal(result.current.currentProviderModel, 'opus');
-  assert.equal(result.current.permissionMode, 'acceptEdits');
 
   // A pick in that window already belongs to the new session.
   act(() => {
     result.current.selectPermissionMode('plan');
   });
   assert.deepEqual(setSessionActivePermissionMode.mock.calls[0], ['claude', 'session-new', 'plan']);
+
+  rerender({ selectedSession: { id: 'session-new', __provider: 'claude' } as ProjectSession });
+
+  // The row has not answered yet; nothing may fall back to sonnet/default.
+  assert.equal(result.current.currentProviderModel, 'opus');
+  assert.equal(result.current.permissionMode, 'plan');
+});
+
+test('a New Session click forgets the session the previous new chat created', async () => {
+  const { useChatProviderState } = await import('@/modules/chat/hooks/useChatProviderState');
+  const { result, rerender } = renderHook(
+    ({ newSessionTrigger }: { newSessionTrigger: number }) => (
+      useChatProviderState({ selectedSession: null, selectedProject: project, newSessionTrigger })
+    ),
+    { initialProps: { newSessionTrigger: 0 } },
+  );
+
+  act(() => {
+    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' });
+  });
+  rerender({ newSessionTrigger: 1 });
+  act(() => {
+    result.current.selectPermissionMode('plan');
+  });
+
+  assert.equal(setSessionActivePermissionMode.mock.calls.length, 0);
 });

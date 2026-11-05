@@ -9,7 +9,7 @@ import type { PendingPermissionRequest, PermissionMode,
   ProviderModelActions,
   ProviderModelOption,
   ProviderModelsDefinition,
-  QueuedSendOptions } from '@/shared/types';
+  SessionEstablishedContext } from '@/shared/types';
 import { DEFAULT_EFFORT_VALUE } from '@/shared/constants';
 import { readSelectedProvider, writeSelectedProvider } from '@/shared/selectedProvider';
 
@@ -81,8 +81,8 @@ type ProviderCapabilitiesApiResponse = {
 type UseChatProviderStateArgs = {
   selectedSession: ProjectSession | null;
   selectedProject: Project | null;
-  /** The open session's id, which a new chat has before navigation selects its session. */
-  activeSessionId?: string | null;
+  /** Bumped on every New Session click, which starts a new chat even in place. */
+  newSessionTrigger?: number;
 };
 
 type ProviderModelsApiResponse = {
@@ -149,11 +149,7 @@ const getSessionSelectionKey = (provider: LLMProvider, sessionId: string): strin
   `${provider}:${sessionId}`
 );
 
-export function useChatProviderState({
-  selectedSession,
-  selectedProject,
-  activeSessionId = selectedSession?.id ?? null,
-}: UseChatProviderStateArgs) {
+export function useChatProviderState({ selectedSession, selectedProject, newSessionTrigger }: UseChatProviderStateArgs) {
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
   const [pendingPermissionRequests, setPendingPermissionRequests] = useState<PendingPermissionRequest[]>([]);
   // The provider the composer sends under. Held here rather than read from
@@ -478,7 +474,7 @@ export function useChatProviderState({
 
   /** Model and reasoning effort recorded for the open session by the backend. */
   const [sessionSelection, setSessionSelection] = useState<SessionProviderSelection | null>(null);
-  const selectedSessionId = activeSessionId?.trim() || null;
+  const selectedSessionId = selectedSession?.id?.trim() || null;
   const selectedSessionProvider = selectedSession?.__provider ?? provider;
   const selectedSessionKey = selectedSessionId
     ? getSessionSelectionKey(selectedSessionProvider, selectedSessionId)
@@ -498,6 +494,8 @@ export function useChatProviderState({
   // The mode picked for a session while its recorded selection was loading,
   // which that load must not revert.
   const sessionPermissionPickRef = useRef<{ key: string; mode: PermissionMode } | null>(null);
+  // The session this new chat just created, until navigation selects it.
+  const seededSessionRef = useRef<{ provider: LLMProvider; sessionId: string } | null>(null);
 
   // Only a new chat starts from the project. Its session is created with the
   // selection it starts from, so once it has an id its own row answers.
@@ -507,22 +505,21 @@ export function useChatProviderState({
     && projectSelection.projectPath === selectedProjectPath
     ? projectSelection
     : null;
-  // A model the catalog no longer lists (a deleted custom model) is dropped.
-  // Until the catalog loads it is taken as is, like the stored default.
-  const projectCatalog = providerModelCatalog[provider];
+  // Only a model the catalog lists is offered, so a deleted custom model is
+  // never recorded on a new session. The effort belongs to that model, so it
+  // goes when the model does (not listed, or replaced by the user's pick).
   const projectModel = activeProjectSelection?.model
-    && (projectCatalog
-      ? projectCatalog.OPTIONS.some((option) => option.value === activeProjectSelection.model)
-      : providerModelsLoading)
+    && providerModelCatalog[provider]?.OPTIONS.some((option) => option.value === activeProjectSelection.model)
     ? activeProjectSelection.model
     : null;
-  // Checked against whichever model ends up current, like any stored effort.
-  const projectEffort = activeProjectSelection?.effort ?? null;
+  const projectEffort = projectModel ? activeProjectSelection?.effort ?? null : null;
 
-  // Picks belong to one new chat; a provider switch inside it keeps them.
+  // Picks and the created session belong to one new chat; a provider switch
+  // inside it keeps them.
   useEffect(() => {
     pickedProjectFieldsRef.current = new Set();
-  }, [selectedProjectPath, selectedSessionId]);
+    seededSessionRef.current = null;
+  }, [newSessionTrigger, selectedProjectPath, selectedSessionId]);
 
   // A new chat starts from what the project's latest session ran with.
   useEffect(() => {
@@ -564,7 +561,7 @@ export function useChatProviderState({
     return () => {
       cancelled = true;
     };
-  }, [provider, selectedProjectPath, selectedSessionId]);
+  }, [newSessionTrigger, provider, selectedProjectPath, selectedSessionId]);
 
   useEffect(() => {
     const validModes = getPermissionModesForProvider(provider);
@@ -598,24 +595,35 @@ export function useChatProviderState({
     // session id yet, and the per-provider key keeps the choice sticky when
     // the real id arrives (and for future sessions of this provider).
     localStorage.setItem(`permissionMode-last-${provider}`, nextMode);
-    if (!selectedSessionId || !selectedSessionKey) {
+    if (!selectedSessionId) {
       clearProjectSelectionField(provider, 'permissionMode');
+    }
+
+    // A new chat that already has its id but no selected session yet records
+    // the pick on that session, so it is not reverted once it is selected.
+    const target = selectedSessionId
+      ? { provider, sessionId: selectedSessionId }
+      : seededSessionRef.current;
+    if (!target) {
       return;
     }
 
-    localStorage.setItem(`permissionMode-${selectedSessionId}`, nextMode);
-    sessionPermissionPickRef.current = { key: selectedSessionKey, mode: nextMode };
+    localStorage.setItem(`permissionMode-${target.sessionId}`, nextMode);
+    sessionPermissionPickRef.current = {
+      key: getSessionSelectionKey(target.provider, target.sessionId),
+      mode: nextMode,
+    };
     setSessionSelection((current) => (
-      current?.sessionId === selectedSessionId ? { ...current, permissionMode: nextMode } : current
+      current?.sessionId === target.sessionId ? { ...current, permissionMode: nextMode } : current
     ));
-    api.providers.setSessionActivePermissionMode(provider, selectedSessionId, nextMode)
+    api.providers.setSessionActivePermissionMode(target.provider, target.sessionId, nextMode)
       .then((response) => {
         if (!response.ok) {
           console.error(`Error saving the session permission mode: HTTP ${response.status}`);
         }
       })
       .catch((error) => console.error('Error saving the session permission mode:', error));
-  }, [clearProjectSelectionField, provider, selectedSessionId, selectedSessionKey]);
+  }, [clearProjectSelectionField, provider, selectedSessionId]);
 
   const cyclePermissionMode = useCallback(() => {
     const modes = getPermissionModesForProvider(provider);
@@ -701,10 +709,12 @@ export function useChatProviderState({
     sessionId?: string | null,
   ) => {
     setStoredProviderModel(targetProvider, model);
+    // Also when a new chat already has its id but no selected session yet,
+    // while the project selection still shows.
+    clearProjectSelectionField(targetProvider, 'model');
 
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!normalizedSessionId) {
-      clearProjectSelectionField(targetProvider, 'model');
       return { scope: 'default' as const, model };
     }
 
@@ -729,7 +739,8 @@ export function useChatProviderState({
     const storedModel = body.data?.model?.trim() || model;
     if (
       sessionModelMutationIdRef.current === mutationId
-      && selectedSessionKeyRef.current === targetSessionKey
+      && (selectedSessionKeyRef.current === targetSessionKey
+        || seededSessionRef.current?.sessionId === normalizedSessionId)
     ) {
       setSessionSelection((current) => ({
         provider: targetProvider,
@@ -757,10 +768,10 @@ export function useChatProviderState({
     sessionId?: string | null,
   ) => {
     setStoredProviderEffort(targetProvider, effort);
+    clearProjectSelectionField(targetProvider, 'effort');
 
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!normalizedSessionId) {
-      clearProjectSelectionField(targetProvider, 'effort');
       return { scope: 'default' as const, effort };
     }
 
@@ -864,9 +875,10 @@ export function useChatProviderState({
   const seedSessionSelection = useCallback((
     targetProvider: LLMProvider,
     sessionId: string,
-    selection: QueuedSendOptions = {},
+    selection: SessionEstablishedContext['selection'] = {},
   ) => {
     const read = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim() : null);
+    seededSessionRef.current = { provider: targetProvider, sessionId };
     setSessionSelection({
       provider: targetProvider,
       sessionId,

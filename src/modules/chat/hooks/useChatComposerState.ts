@@ -1030,7 +1030,11 @@ export function useChatComposerState({
           provider,
           project: selectedProject,
           summary: createdSessionName,
-          selection: sendOptions,
+          selection: {
+            model: sendOptions.model,
+            effort: sendOptions.effort,
+            permissionMode: sendOptions.permissionMode,
+          },
         });
       }
 

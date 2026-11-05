@@ -474,8 +474,8 @@ export type SessionEstablishedContext = {
   provider: LLMProvider;
   project: Project;
   summary?: string | null;
-  /** The send options the session was created with (model, effort, permission mode). */
-  selection?: QueuedSendOptions;
+  /** The model, effort and permission mode the session was created with. */
+  selection?: { model?: unknown; effort?: unknown; permissionMode?: unknown };
 };
 
 /** The result returned for a tool call, carrying its content, error flag, timestamp and any provider-specific extras that the tool renderers read. */

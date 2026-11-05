@@ -103,6 +103,35 @@ function ChatInterface({
   }, []);
 
   const {
+    provider,
+    setProvider,
+    providerModels,
+    currentProviderEffort,
+    currentProviderEffortOptions,
+    currentProviderModel,
+    currentProviderModelOptions,
+    permissionMode,
+    pendingPermissionRequests,
+    setPendingPermissionRequests,
+    availablePermissionModes,
+    selectPermissionMode,
+    cyclePermissionMode,
+    providerModelCatalog,
+    providerModelsLoading,
+    providerModelActions,
+    selectProviderModel,
+    seedSessionSelection,
+    selectProviderEffort,
+    resolvePermissionModeForProvider,
+    supportsMessageEditing,
+    supportsSessionForking,
+  } = useChatProviderState({
+    selectedSession,
+    selectedProject,
+    newSessionTrigger,
+  });
+
+  const {
     chatMessages,
     addMessage,
     sessionActivity,
@@ -148,36 +177,6 @@ function ChatInterface({
     statusCheckSentAtRef,
     lastSeqRef,
     sessionStore,
-  });
-
-  const {
-    provider,
-    setProvider,
-    providerModels,
-    currentProviderEffort,
-    currentProviderEffortOptions,
-    currentProviderModel,
-    currentProviderModelOptions,
-    permissionMode,
-    pendingPermissionRequests,
-    setPendingPermissionRequests,
-    availablePermissionModes,
-    selectPermissionMode,
-    cyclePermissionMode,
-    providerModelCatalog,
-    providerModelsLoading,
-    providerModelActions,
-    selectProviderModel,
-    seedSessionSelection,
-    selectProviderEffort,
-    resolvePermissionModeForProvider,
-    supportsMessageEditing,
-    supportsSessionForking,
-  } = useChatProviderState({
-    selectedSession,
-    selectedProject,
-    // A new chat has its id before navigation selects its session.
-    activeSessionId: selectedSession?.id || currentSessionId || null,
   });
 
   // Brand-new conversation: the composer allocated a stable session id via
@@ -423,7 +422,8 @@ function ChatInterface({
   // The empty state only shows before a chat has a session, so its pick is a
   // new-chat pick that also replaces the project's model.
   const selectEmptyStateProviderModel = useCallback((targetProvider: LLMProvider, model: string) => {
-    void selectProviderModel(targetProvider, model, null);
+    selectProviderModel(targetProvider, model, null)
+      .catch((error) => console.error('Error changing the new chat model:', error));
   }, [selectProviderModel]);
 
   const handleSelectComposerEffort = useCallback(async (effort: string) => {
