@@ -966,10 +966,10 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     }
   }, [clearProjectSelectionField, isComposerTarget, resolvePickTarget, setStoredProviderEffort, trackSessionSave]);
 
-  // For the /model modal's wording: where a pick of the composer's provider
-  // lands, decided like the save target. Read in render; the seed is set
-  // together with the chat's session id, which re-renders.
-  const composerSessionId = getComposerSession()?.sessionId ?? null;
+  /** Whether a model pick for a provider is saved on a session, for the /model modal's wording. */
+  const savesPickOnSession = useCallback((targetProvider: LLMProvider) => (
+    resolvePickTarget(targetProvider) !== null
+  ), [resolvePickTarget]);
 
   // The open session's model wins over the per-provider default, so switching
   // sessions shows (and sends) what each session actually runs with. What it
@@ -1171,7 +1171,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     selectProviderModel,
     selectProviderEffort,
     seedSessionSelection,
-    composerSessionId,
+    savesPickOnSession,
     resolvePermissionModeForProvider,
     supportsMessageEditing,
     supportsSessionForking,

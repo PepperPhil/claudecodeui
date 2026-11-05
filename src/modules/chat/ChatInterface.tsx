@@ -121,7 +121,7 @@ function ChatInterface({
     providerModelActions,
     selectProviderModel,
     seedSessionSelection,
-    composerSessionId,
+    savesPickOnSession,
     selectProviderEffort,
     resolvePermissionModeForProvider,
     supportsMessageEditing,
@@ -416,7 +416,7 @@ function ChatInterface({
   // pick also replaces the model a new chat takes from its project.
   const pickProviderModel = useCallback((targetProvider: LLMProvider, model: string) => {
     selectProviderModel(targetProvider, model)
-      .catch((error) => console.error('Error changing the active session model:', error));
+      .catch((error) => console.error('Error changing the model:', error));
   }, [selectProviderModel]);
   const handleSelectComposerModel = useCallback((model: string) => {
     pickProviderModel(provider, model);
@@ -622,7 +622,7 @@ function ChatInterface({
         providerModelActions={providerModelActions}
         activeProvider={provider}
         activeProviderModel={currentProviderModel}
-        currentSessionId={composerSessionId}
+        savesPickOnSession={savesPickOnSession}
         onSelectProviderModel={selectProviderModel}
       />
     </PermissionContext.Provider>

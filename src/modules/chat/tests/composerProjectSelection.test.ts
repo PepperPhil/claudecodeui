@@ -434,3 +434,18 @@ test('a model from another provider is not saved on the composer session', async
   assert.equal(scope, 'default');
   assert.equal(saveModel.mock.calls.length, 0);
 });
+
+test('savesPickOnSession answers from the same target the save uses', async () => {
+  const { result, rerender } = await renderProviderState(null);
+  assert.equal(result.current.savesPickOnSession('claude'), false);
+
+  act(() => {
+    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus' });
+  });
+  assert.equal(result.current.savesPickOnSession('claude'), true);
+  // A pick for another provider's model only becomes that provider's default.
+  assert.equal(result.current.savesPickOnSession('codex'), false);
+
+  rerender({ selectedSession: null, newSessionTrigger: 1 });
+  assert.equal(result.current.savesPickOnSession('claude'), false);
+});
