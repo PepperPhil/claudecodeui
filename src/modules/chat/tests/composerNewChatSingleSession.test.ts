@@ -47,9 +47,8 @@ const releaseCreates = async (status = 201) => {
 const createRequests = (fetchMock: ReturnType<typeof vi.fn>) => fetchMock.mock.calls
   .filter(([url, init]) => String(url) === '/api/providers/sessions' && (init as RequestInit | undefined)?.method === 'POST');
 
-const renderComposer = (initialSession: ProjectSession | null, { chatStillShown = true } = {}) => {
+const renderComposer = (initialSession: ProjectSession | null) => {
   const sent: Array<{ type: string; sessionId?: string; content?: string }> = [];
-  const added: unknown[] = [];
   const established: string[] = [];
   const contexts: SessionEstablishedContext[] = [];
   const view = renderHook(({ session, trigger = 0 }: { session: ProjectSession | null; trigger?: number }) =>
@@ -71,15 +70,14 @@ const renderComposer = (initialSession: ProjectSession | null, { chatStillShown 
       onSessionEstablished: (sessionId, context) => {
         established.push(sessionId);
         contexts.push(context);
-        return chatStillShown;
       },
       scrollToBottom: () => undefined,
-      addMessage: (message) => { added.push(message); },
+      addMessage: () => undefined,
       setIsUserScrolledUp: () => undefined,
       setPendingPermissionRequests: () => undefined,
     }),
   { initialProps: { session: initialSession, trigger: 0 } as { session: ProjectSession | null; trigger?: number } });
-  return { view, established, contexts, added, chatSends: () => sent.filter((message) => message.type === 'chat.send') };
+  return { view, established, contexts, chatSends: () => sent.filter((message) => message.type === 'chat.send') };
 };
 
 const renderNewChat = () => renderComposer(null);
@@ -218,21 +216,4 @@ test('the established session reports the New Session trigger its send started u
   await releaseCreates();
 
   assert.equal(contexts[0]?.newSessionTrigger, 0);
-});
-
-test('a send whose chat was left still reaches its session but leaves the shown chat alone', async () => {
-  const { view, added, chatSends } = renderComposer(null, { chatStillShown: false });
-  await act(async () => { view.result.current.setInput('hello'); });
-
-  await act(async () => {
-    void view.result.current.handleSubmit({ preventDefault: () => undefined } as never);
-  });
-  // Meanwhile the user moves to another chat and types there.
-  view.rerender({ session: { id: 'session-other' } as ProjectSession });
-  await act(async () => { view.result.current.setInput('something else'); });
-  await releaseCreates();
-
-  assert.deepEqual(chatSends().map((message) => [message.sessionId, message.content]), [['session-1', 'hello']]);
-  assert.equal(added.length, 0, 'the message is not added to the chat now shown');
-  assert.equal(view.result.current.input, 'something else', 'the shown chat keeps its input');
 });

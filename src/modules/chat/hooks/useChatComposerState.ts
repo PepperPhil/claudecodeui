@@ -62,8 +62,7 @@ type UseChatComposerStateArgs = {
    * stable for the conversation's whole lifetime — the consumer navigates to
    * /session/:id and records it as the current session.
    */
-  /** Returns false when the chat the send came from is no longer shown. */
-  onSessionEstablished?: (sessionId: string, context: SessionEstablishedContext) => boolean | void;
+  onSessionEstablished?: (sessionId: string, context: SessionEstablishedContext) => void;
   onFileOpen?: (filePath: string, diffInfo?: unknown) => void;
   onShowSettings?: () => void;
   scrollToBottom: () => void;
@@ -878,10 +877,6 @@ export function useChatComposerState({
     ) => {
       event.preventDefault();
       const sendNewSessionTrigger = newSessionTriggerRef.current;
-      const sendDraftScope = draftScopeRef.current;
-      // False once the user has left the chat this send came from: the
-      // message still goes to its session, but no longer touches the screen.
-      let sendStillShown = true;
       const currentInput = queuedSubmission?.content ?? inputValueRef.current;
       const currentAttachments = queuedSubmission?.attachments ?? attachedFiles;
       const previouslyUploadedAttachments = queuedSubmission?.uploadedAttachments ?? [];
@@ -1043,7 +1038,7 @@ export function useChatComposerState({
           return;
         }
 
-        sendStillShown = onSessionEstablished?.(targetSessionId, {
+        onSessionEstablished?.(targetSessionId, {
           provider,
           project: selectedProject,
           summary: createdSessionName,
@@ -1053,7 +1048,7 @@ export function useChatComposerState({
             effort: sendOptions.effort,
             permissionMode: sendOptions.permissionMode,
           },
-        }) !== false;
+        });
       }
 
       // A new turn replaces the CLI process a session's background work runs
@@ -1099,9 +1094,7 @@ export function useChatComposerState({
         ...(editingAnchorId ? { replacesAnchorId: editingAnchorId } : {}),
       };
 
-      if (sendStillShown) {
-        addMessage(userMessage);
-      }
+      addMessage(userMessage);
       // Mark this request as processing in the per-session activity map (the
       // single source of truth the indicator derives from). The id is always
       // concrete at this point — no pending placeholder exists anymore.
@@ -1110,10 +1103,8 @@ export function useChatComposerState({
         canInterrupt: true,
       });
 
-      if (sendStillShown) {
-        setIsUserScrolledUp(false);
-        setTimeout(() => scrollToBottom(), 100);
-      }
+      setIsUserScrolledUp(false);
+      setTimeout(() => scrollToBottom(), 100);
 
       // One message shape for every provider. The backend resolves the
       // provider, project path, and provider-native resume id from the
@@ -1138,14 +1129,6 @@ export function useChatComposerState({
       // navigated to. Queued drafts were recorded when they were queued; the
       // consecutive-duplicate check keeps this second call a no-op.
       recordSentMessage(currentInput, targetSessionId);
-      // The composer now holds another chat's input; only the sent chat's
-      // draft is done.
-      if (!sendStillShown) {
-        if (sendDraftScope) {
-          writeDraftText(sendDraftScope, '');
-        }
-        return;
-      }
       setInput('');
       inputValueRef.current = '';
       resetCommandMenuState();

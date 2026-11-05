@@ -534,3 +534,26 @@ test('a session that answers after a project switch or New Session stays with it
   pickMode('acceptEdits');
   assert.equal(backend.savedModes.length, 1);
 });
+
+test('a send that answers late does not replace the current chat\'s created session', async () => {
+  const { result, rerender } = await renderProviderState(null);
+  rerender({ newSessionTrigger: 1 });
+
+  // The current chat's send answers first, then the previous chat's.
+  act(() => {
+    result.current.seedSessionSelection({
+      provider: 'claude', sessionId: 'session-b', selection: { model: 'opus' }, projectPath: '/repo', newSessionTrigger: 1,
+    });
+  });
+  act(() => {
+    result.current.seedSessionSelection({
+      provider: 'claude', sessionId: 'session-a', selection: { model: 'sonnet' }, projectPath: '/repo', newSessionTrigger: 0,
+    });
+  });
+  rerender({ currentSessionId: 'session-b' });
+  act(() => {
+    result.current.selectPermissionMode('plan');
+  });
+
+  assert.deepEqual(backend.savedModes, [['claude', 'session-b', 'plan']]);
+});

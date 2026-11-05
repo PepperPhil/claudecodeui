@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ArrowDownIcon } from 'lucide-react';
 
@@ -181,47 +181,20 @@ function ChatInterface({
     currentSessionId,
   });
 
-  // The new chat on screen, written once committed, so a send that answers
-  // late can tell whether its chat is still the one shown.
-  const shownChat = {
-    newSessionTrigger,
-    projectPath: selectedProject?.fullPath ?? null,
-    sessionId: selectedSession?.id ?? null,
-  };
-  const shownChatRef = useRef(shownChat);
-  useLayoutEffect(() => {
-    shownChatRef.current = shownChat;
-  });
-
   // Brand-new conversation: the composer allocated a stable session id via
   // the session gateway before the first send. Record it locally and put it
   // in the URL — this id never changes again, so there is no later handoff.
-  // Returns whether the chat was still shown, so the composer knows whether
-  // the send still belongs on screen.
-  const handleSessionEstablished = useCallback((sessionId: string, context: SessionEstablishedContext): boolean => {
-    // The session exists either way, so it is always reported upstream. But a
-    // send whose chat the user left (New Session, another project, or an
-    // existing session) while it was answering must not pull them back into
-    // it or become its target.
-    const shown = shownChatRef.current;
-    const chatStillShown = context.newSessionTrigger === shown.newSessionTrigger
-      && context.project.fullPath === shown.projectPath
-      && shown.sessionId === null;
-    if (chatStillShown) {
-      seedSessionSelection({
-        provider: context.provider,
-        sessionId,
-        selection: context.selection,
-        projectPath: context.project.fullPath,
-        newSessionTrigger: context.newSessionTrigger,
-      });
-      setCurrentSessionId(sessionId);
-    }
+  const handleSessionEstablished = useCallback<NonNullable<ChatInterfaceProps['onSessionEstablished']>>((sessionId, context) => {
+    seedSessionSelection({
+      provider: context.provider,
+      sessionId,
+      selection: context.selection,
+      projectPath: context.project.fullPath,
+      newSessionTrigger: context.newSessionTrigger,
+    });
+    setCurrentSessionId(sessionId);
     onSessionEstablished?.(sessionId, context);
-    if (chatStillShown) {
-      onNavigateToSession?.(sessionId);
-    }
-    return chatStillShown;
+    onNavigateToSession?.(sessionId);
   }, [seedSessionSelection, setCurrentSessionId, onSessionEstablished, onNavigateToSession]);
 
   const {
