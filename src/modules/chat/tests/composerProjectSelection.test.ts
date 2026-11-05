@@ -231,16 +231,41 @@ test('a new chat keeps its selection while its new session loads', async () => {
     });
   });
 
-  // A pick in that window already belongs to the new session.
+  rerender({ selectedSession: { id: 'session-new', __provider: 'claude' } as ProjectSession });
+
+  // The row has not answered yet; nothing may fall back to sonnet/default.
+  assert.equal(result.current.currentProviderModel, 'opus');
+  assert.equal(result.current.permissionMode, 'acceptEdits');
+});
+
+test('a mode picked before the new session is selected survives its first load', async () => {
+  const late = deferred();
+  responses.sessionActiveModel = late.respond;
+  const { useChatProviderState } = await import('@/modules/chat/hooks/useChatProviderState');
+  const { result, rerender } = renderHook(
+    ({ selectedSession }: { selectedSession: ProjectSession | null }) => (
+      useChatProviderState({ selectedSession, selectedProject: project })
+    ),
+    { initialProps: { selectedSession: null as ProjectSession | null } },
+  );
+
+  act(() => {
+    result.current.seedSessionSelection('claude', 'session-new', { model: 'opus', permissionMode: 'acceptEdits' });
+  });
   act(() => {
     result.current.selectPermissionMode('plan');
   });
   assert.deepEqual(setSessionActivePermissionMode.mock.calls[0], ['claude', 'session-new', 'plan']);
 
   rerender({ selectedSession: { id: 'session-new', __provider: 'claude' } as ProjectSession });
+  // The load read the row before the pick's save landed.
+  await act(async () => {
+    late.resolve({
+      success: true,
+      data: { model: 'opus', effort: null, source: 'session', permissionMode: 'acceptEdits' },
+    });
+  });
 
-  // The row has not answered yet; nothing may fall back to sonnet/default.
-  assert.equal(result.current.currentProviderModel, 'opus');
   assert.equal(result.current.permissionMode, 'plan');
 });
 

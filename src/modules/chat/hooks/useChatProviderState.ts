@@ -595,14 +595,12 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     // session id yet, and the per-provider key keeps the choice sticky when
     // the real id arrives (and for future sessions of this provider).
     localStorage.setItem(`permissionMode-last-${provider}`, nextMode);
-    if (!selectedSessionId) {
-      clearProjectSelectionField(provider, 'permissionMode');
-    }
+    clearProjectSelectionField(provider, 'permissionMode');
 
     // A new chat that already has its id but no selected session yet records
     // the pick on that session, so it is not reverted once it is selected.
     const target = selectedSessionId
-      ? { provider, sessionId: selectedSessionId }
+      ? { provider: selectedSessionProvider, sessionId: selectedSessionId }
       : seededSessionRef.current;
     if (!target) {
       return;
@@ -623,7 +621,7 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
         }
       })
       .catch((error) => console.error('Error saving the session permission mode:', error));
-  }, [clearProjectSelectionField, provider, selectedSessionId]);
+  }, [clearProjectSelectionField, provider, selectedSessionId, selectedSessionProvider]);
 
   const cyclePermissionMode = useCallback(() => {
     const modes = getPermissionModesForProvider(provider);
@@ -638,15 +636,19 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     const requestId = sessionSelectionLoadRequestIdRef.current + 1;
     sessionSelectionLoadRequestIdRef.current = requestId;
 
-    sessionPermissionPickRef.current = null;
-    if (!selectedSessionId) {
+    const targetProvider = selectedSessionProvider;
+    const targetSessionKey = selectedSessionId ? getSessionSelectionKey(targetProvider, selectedSessionId) : null;
+    // A pick made for this session before it was selected (a new chat's own
+    // session) still has to win over this load.
+    if (sessionPermissionPickRef.current?.key !== targetSessionKey) {
+      sessionPermissionPickRef.current = null;
+    }
+    if (!selectedSessionId || !targetSessionKey) {
       setSessionSelection(null);
       return;
     }
 
     let cancelled = false;
-    const targetProvider = selectedSessionProvider;
-    const targetSessionKey = getSessionSelectionKey(targetProvider, selectedSessionId);
 
     const loadSessionSelection = async () => {
       try {
@@ -806,7 +808,8 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
       const storedEffort = body.data?.effort?.trim() || effort;
       if (
         sessionEffortMutationIdRef.current === mutationId
-        && selectedSessionKeyRef.current === targetSessionKey
+        && (selectedSessionKeyRef.current === targetSessionKey
+          || seededSessionRef.current?.sessionId === normalizedSessionId)
       ) {
         setSessionSelection((current) => ({
           provider: targetProvider,
@@ -825,7 +828,8 @@ export function useChatProviderState({ selectedSession, selectedProject, newSess
     } catch (error) {
       if (
         sessionEffortMutationIdRef.current === mutationId
-        && selectedSessionKeyRef.current === targetSessionKey
+        && (selectedSessionKeyRef.current === targetSessionKey
+          || seededSessionRef.current?.sessionId === normalizedSessionId)
       ) {
         setSessionSelection((current) => (
           current?.provider === targetProvider
