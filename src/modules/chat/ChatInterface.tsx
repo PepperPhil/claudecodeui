@@ -185,19 +185,17 @@ function ChatInterface({
   // the session gateway before the first send. Record it locally and put it
   // in the URL — this id never changes again, so there is no later handoff.
   const handleSessionEstablished = useCallback<NonNullable<ChatInterfaceProps['onSessionEstablished']>>((sessionId, context) => {
-    // The send holds the handler from its own render, so this newSessionTrigger
-    // is the one the send was made under, like context.project.
     seedSessionSelection({
       provider: context.provider,
       sessionId,
       selection: context.selection,
       projectPath: context.project.fullPath,
-      newSessionTrigger,
+      newSessionTrigger: context.newSessionTrigger,
     });
     setCurrentSessionId(sessionId);
     onSessionEstablished?.(sessionId, context);
     onNavigateToSession?.(sessionId);
-  }, [newSessionTrigger, seedSessionSelection, setCurrentSessionId, onSessionEstablished, onNavigateToSession]);
+  }, [seedSessionSelection, setCurrentSessionId, onSessionEstablished, onNavigateToSession]);
 
   const {
     input,
@@ -255,6 +253,7 @@ function ChatInterface({
     selectedProject,
     selectedSession,
     currentSessionId,
+    newSessionTrigger,
     provider,
     permissionMode,
     cyclePermissionMode,

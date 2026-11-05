@@ -36,6 +36,8 @@ type UseChatComposerStateArgs = {
   selectedProject: Project | null;
   selectedSession: ProjectSession | null;
   currentSessionId: string | null;
+  /** Bumped on every New Session click; a new chat's session records the value its send started under. */
+  newSessionTrigger?: number;
   provider: LLMProvider;
   permissionMode: PermissionMode | string;
   cyclePermissionMode: () => void;
@@ -214,6 +216,7 @@ export function useChatComposerState({
   selectedProject,
   selectedSession,
   currentSessionId,
+  newSessionTrigger,
   provider,
   permissionMode,
   cyclePermissionMode,
@@ -284,6 +287,10 @@ export function useChatComposerState({
     ) => Promise<void>) | null
   >(null);
   const inputValueRef = useRef(input);
+  // Read when a send starts, so the established session reports that send's
+  // New Session trigger even if the user clicks New Session while it is out.
+  const newSessionTriggerRef = useRef(newSessionTrigger);
+  newSessionTriggerRef.current = newSessionTrigger;
   const selectedProjectId = selectedProject?.projectId;
   // Prefer the stable backend-allocated id (selectedSession.id) but fall back
   // to currentSessionId for a just-established session that hasn't been
@@ -866,6 +873,7 @@ export function useChatComposerState({
       submitOptions?: SubmitOptions,
     ) => {
       event.preventDefault();
+      const sendNewSessionTrigger = newSessionTriggerRef.current;
       const currentInput = queuedSubmission?.content ?? inputValueRef.current;
       const currentAttachments = queuedSubmission?.attachments ?? attachedFiles;
       const previouslyUploadedAttachments = queuedSubmission?.uploadedAttachments ?? [];
@@ -1031,6 +1039,7 @@ export function useChatComposerState({
           provider,
           project: selectedProject,
           summary: createdSessionName,
+          newSessionTrigger: sendNewSessionTrigger,
           selection: {
             model: sendOptions.model,
             effort: sendOptions.effort,

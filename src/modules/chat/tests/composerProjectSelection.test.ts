@@ -523,12 +523,37 @@ test('a session that answers after a project switch or New Session stays with it
   // The send was made in /repo, but the user is in /other when it answers.
   rerender({ selectedProject: { ...project, fullPath: '/other' } });
   seed('/repo', 0);
+  assert.equal(result.current.savesPickOnSession('claude'), false);
   pickMode('acceptEdits');
+  assert.equal(backend.savedModes.length, 1);
+
   // The send was made before a New Session click.
   rerender({ selectedProject: project, newSessionTrigger: 1 });
   seed('/repo', 0);
-  pickMode('acceptEdits');
-
-  assert.equal(backend.savedModes.length, 1);
   assert.equal(result.current.savesPickOnSession('claude'), false);
+  pickMode('acceptEdits');
+  assert.equal(backend.savedModes.length, 1);
+});
+
+test('a send that answers late does not replace the current chat\'s created session', async () => {
+  const { result, rerender } = await renderProviderState(null);
+  rerender({ newSessionTrigger: 1 });
+
+  // The current chat's send answers first, then the previous chat's.
+  act(() => {
+    result.current.seedSessionSelection({
+      provider: 'claude', sessionId: 'session-b', selection: { model: 'opus' }, projectPath: '/repo', newSessionTrigger: 1,
+    });
+  });
+  act(() => {
+    result.current.seedSessionSelection({
+      provider: 'claude', sessionId: 'session-a', selection: { model: 'sonnet' }, projectPath: '/repo', newSessionTrigger: 0,
+    });
+  });
+  rerender({ currentSessionId: 'session-b' });
+  act(() => {
+    result.current.selectPermissionMode('plan');
+  });
+
+  assert.deepEqual(backend.savedModes, [['claude', 'session-b', 'plan']]);
 });
