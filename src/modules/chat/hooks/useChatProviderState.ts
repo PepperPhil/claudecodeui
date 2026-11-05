@@ -113,6 +113,8 @@ type SessionSelectionApiResponse = {
      * which the composer replaces with the user's per-provider selection.
      */
     source?: 'session' | 'provider' | 'default';
+    /** NULL until the session records a permission mode. */
+    permissionMode?: string | null;
   };
 };
 
@@ -121,13 +123,28 @@ type SessionProviderSelection = {
   sessionId: string;
   model: string | null;
   effort: string | null;
+  permissionMode: string | null;
+};
+
+/** What a new chat in one project starts with; nulls fall back to per-provider defaults. */
+type ProjectProviderSelection = {
+  provider: LLMProvider;
+  projectPath: string;
+  model: string | null;
+  effort: string | null;
+  permissionMode: string | null;
+};
+
+type ProjectSelectionApiResponse = {
+  success?: boolean;
+  data?: Omit<ProjectProviderSelection, 'projectPath'>;
 };
 
 const getSessionSelectionKey = (provider: LLMProvider, sessionId: string): string => (
   `${provider}:${sessionId}`
 );
 
-export function useChatProviderState({ selectedSession, selectedProject: _selectedProject }: UseChatProviderStateArgs) {
+export function useChatProviderState({ selectedSession, selectedProject }: UseChatProviderStateArgs) {
   const [permissionMode, setPermissionMode] = useState<PermissionMode>('default');
   const [pendingPermissionRequests, setPendingPermissionRequests] = useState<PendingPermissionRequest[]>([]);
   // The provider the composer sends under. Held here rather than read from
@@ -398,22 +415,6 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
   }, [providerEfforts, providerModels, reconcileStoredEffort]);
 
   useEffect(() => {
-    const validModes = getPermissionModesForProvider(provider);
-    const sessionSavedMode = selectedSession?.id
-      ? (localStorage.getItem(`permissionMode-${selectedSession.id}`) as PermissionMode | null)
-      : null;
-    // Fall back to the last mode picked for this provider: a brand-new chat
-    // only receives its session id after the first send, so without this the
-    // mode chosen beforehand would snap back to the default as soon as the
-    // session id appears.
-    const providerSavedMode = localStorage.getItem(`permissionMode-last-${provider}`) as PermissionMode | null;
-    const savedMode = [sessionSavedMode, providerSavedMode].find(
-      (mode): mode is PermissionMode => Boolean(mode && validModes.includes(mode)),
-    );
-    setPermissionMode(savedMode ?? getDefaultPermissionModeForProvider(provider));
-  }, [selectedSession?.id, provider, getDefaultPermissionModeForProvider, getPermissionModesForProvider]);
-
-  useEffect(() => {
     if (!selectedSession?.__provider || selectedSession.__provider === provider) {
       return;
     }
@@ -429,26 +430,6 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
       previous.filter((request) => !request.sessionId || request.sessionId === selectedSession?.id),
     );
   }, [selectedSession?.id]);
-
-  const selectPermissionMode = useCallback((nextMode: PermissionMode) => {
-    setPermissionMode(nextMode);
-
-    // Persist per provider as well as per session: a brand-new chat has no
-    // session id yet, and the per-provider key keeps the choice sticky when
-    // the real id arrives (and for future sessions of this provider).
-    localStorage.setItem(`permissionMode-last-${provider}`, nextMode);
-    if (selectedSession?.id) {
-      localStorage.setItem(`permissionMode-${selectedSession.id}`, nextMode);
-    }
-  }, [provider, selectedSession?.id]);
-
-  const cyclePermissionMode = useCallback(() => {
-    const modes = getPermissionModesForProvider(provider);
-
-    const currentIndex = modes.indexOf(permissionMode);
-    const nextIndex = (currentIndex + 1) % modes.length;
-    selectPermissionMode(modes[nextIndex]);
-  }, [permissionMode, provider, getPermissionModesForProvider, selectPermissionMode]);
 
   const availablePermissionModes = useMemo(
     () => getPermissionModesForProvider(provider),
@@ -491,6 +472,112 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     : null;
   const sessionModel = activeSessionSelection?.model ?? null;
 
+  const [projectSelection, setProjectSelection] = useState<ProjectProviderSelection | null>(null);
+  const selectedProjectPath = selectedProject?.fullPath?.trim() || null;
+  // Only a new chat starts from the project: an open session has its own answer.
+  const activeProjectSelection = projectSelection
+    && !selectedSessionId
+    && projectSelection.provider === provider
+    && projectSelection.projectPath === selectedProjectPath
+    ? projectSelection
+    : null;
+  // A model the catalog no longer lists (a deleted custom model) is not offered.
+  const projectModel = activeProjectSelection?.model
+    && providerModelCatalog[provider]?.OPTIONS.some((option) => option.value === activeProjectSelection.model)
+    ? activeProjectSelection.model
+    : null;
+
+  useEffect(() => {
+    if (selectedSessionId || !selectedProjectPath) {
+      return;
+    }
+
+    let cancelled = false;
+    const loadProjectSelection = async () => {
+      try {
+        const response = await api.providers.projectSelection(provider, selectedProjectPath);
+        const body = (await response.json()) as ProjectSelectionApiResponse;
+        if (cancelled || !body.success || !body.data) {
+          return;
+        }
+        setProjectSelection({
+          provider,
+          projectPath: selectedProjectPath,
+          model: body.data.model ?? null,
+          effort: body.data.effort ?? null,
+          permissionMode: body.data.permissionMode ?? null,
+        });
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Error loading the project model and permission mode:', error);
+        }
+      }
+    };
+
+    void loadProjectSelection();
+    return () => {
+      cancelled = true;
+    };
+  }, [provider, selectedProjectPath, selectedSessionId]);
+
+  /** Drops one project default once the user picks that value for the new chat themselves. */
+  const clearProjectSelectionField = useCallback((field: 'model' | 'effort' | 'permissionMode') => {
+    setProjectSelection((current) => (current && current[field] !== null ? { ...current, [field]: null } : current));
+  }, []);
+
+  useEffect(() => {
+    const validModes = getPermissionModesForProvider(provider);
+    // Sessions from before the backend recorded modes kept theirs in this
+    // browser only, under the per-session key.
+    const sessionSavedMode = selectedSession?.id
+      ? (activeSessionSelection?.permissionMode ?? localStorage.getItem(`permissionMode-${selectedSession.id}`))
+      : null;
+    // Fall back to the last mode picked for this provider: a brand-new chat
+    // only receives its session id after the first send, so without this the
+    // mode chosen beforehand would snap back to the default as soon as the
+    // session id appears.
+    const providerSavedMode = localStorage.getItem(`permissionMode-last-${provider}`) as PermissionMode | null;
+    const savedMode = [sessionSavedMode, activeProjectSelection?.permissionMode, providerSavedMode].find(
+      (mode): mode is PermissionMode => Boolean(mode && validModes.includes(mode as PermissionMode)),
+    );
+    setPermissionMode(savedMode ?? getDefaultPermissionModeForProvider(provider));
+  }, [
+    selectedSession?.id,
+    provider,
+    activeSessionSelection?.permissionMode,
+    activeProjectSelection?.permissionMode,
+    getDefaultPermissionModeForProvider,
+    getPermissionModesForProvider,
+  ]);
+
+  const selectPermissionMode = useCallback((nextMode: PermissionMode) => {
+    setPermissionMode(nextMode);
+
+    // Persist per provider as well as per session: a brand-new chat has no
+    // session id yet, and the per-provider key keeps the choice sticky when
+    // the real id arrives (and for future sessions of this provider).
+    localStorage.setItem(`permissionMode-last-${provider}`, nextMode);
+    if (!selectedSessionId) {
+      clearProjectSelectionField('permissionMode');
+      return;
+    }
+
+    setSessionSelection((current) => (
+      current?.sessionId === selectedSessionId ? { ...current, permissionMode: nextMode } : current
+    ));
+    api.providers.setSessionActivePermissionMode(provider, selectedSessionId, nextMode)
+      .catch((error) => console.error('Error saving the session permission mode:', error));
+  }, [clearProjectSelectionField, provider, selectedSessionId]);
+
+  const cyclePermissionMode = useCallback(() => {
+    const modes = getPermissionModesForProvider(provider);
+
+    const currentIndex = modes.indexOf(permissionMode);
+    const nextIndex = (currentIndex + 1) % modes.length;
+    selectPermissionMode(modes[nextIndex]);
+  }, [permissionMode, provider, getPermissionModesForProvider, selectPermissionMode]);
+
+
   useEffect(() => {
     const requestId = sessionSelectionLoadRequestIdRef.current + 1;
     sessionSelectionLoadRequestIdRef.current = requestId;
@@ -523,6 +610,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
           sessionId: selectedSessionId,
           model: body.success && resolvedModel && body.data?.source !== 'default' ? resolvedModel : null,
           effort: body.success ? resolvedEffort : null,
+          permissionMode: body.success ? body.data?.permissionMode?.trim() || null : null,
         });
       } catch (error) {
         if (
@@ -536,6 +624,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
             sessionId: selectedSessionId,
             model: null,
             effort: null,
+            permissionMode: null,
           });
         }
       }
@@ -563,6 +652,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
 
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!normalizedSessionId) {
+      clearProjectSelectionField('model');
       return { scope: 'default' as const, model };
     }
 
@@ -596,10 +686,13 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
         effort: current?.provider === targetProvider && current.sessionId === normalizedSessionId
           ? current.effort
           : body.data?.effort?.trim() || null,
+        permissionMode: current?.provider === targetProvider && current.sessionId === normalizedSessionId
+          ? current.permissionMode
+          : null,
       }));
     }
     return { scope: 'session' as const, model: storedModel };
-  }, [setStoredProviderModel]);
+  }, [clearProjectSelectionField, setStoredProviderModel]);
 
   /**
    * Applies an effort choice optimistically and persists it for the open
@@ -615,6 +708,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
 
     const normalizedSessionId = typeof sessionId === 'string' ? sessionId.trim() : '';
     if (!normalizedSessionId) {
+      clearProjectSelectionField('effort');
       return { scope: 'default' as const, effort };
     }
 
@@ -632,6 +726,7 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
       sessionId: normalizedSessionId,
       model: previousSelection?.model ?? null,
       effort,
+      permissionMode: previousSelection?.permissionMode ?? null,
     });
 
     try {
@@ -657,6 +752,9 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
             ? current.model
             : previousSelection?.model ?? null,
           effort: storedEffort,
+          permissionMode: current?.provider === targetProvider && current.sessionId === normalizedSessionId
+            ? current.permissionMode
+            : previousSelection?.permissionMode ?? null,
         }));
       }
 
@@ -676,11 +774,12 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
       }
       throw error;
     }
-  }, [sessionSelection, setStoredProviderEffort]);
+  }, [clearProjectSelectionField, sessionSelection, setStoredProviderEffort]);
 
   // The open session's model wins over the per-provider default, so switching
-  // sessions shows (and sends) what each session actually runs with.
-  const currentProviderModel = sessionModel ?? providerModels[provider];
+  // sessions shows (and sends) what each session actually runs with. A new
+  // chat starts from what the project's latest session used.
+  const currentProviderModel = sessionModel ?? projectModel ?? providerModels[provider];
   const currentProviderEffortOptions = useMemo(() => {
     return getEffortOptionsForModel(provider, currentProviderModel);
   }, [currentProviderModel, getEffortOptionsForModel, provider]);
@@ -689,10 +788,18 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
       provider,
       currentProviderModel,
       activeSessionSelection?.effort
+        ?? activeProjectSelection?.effort
         ?? providerEfforts[provider]
         ?? DEFAULT_EFFORT_VALUE,
     );
-  }, [activeSessionSelection?.effort, currentProviderModel, provider, providerEfforts, reconcileStoredEffort]);
+  }, [
+    activeProjectSelection?.effort,
+    activeSessionSelection?.effort,
+    currentProviderModel,
+    provider,
+    providerEfforts,
+    reconcileStoredEffort,
+  ]);
   const currentProviderModelOptions = useMemo(
     () => providerModelCatalog[provider]?.OPTIONS ?? [],
     [provider, providerModelCatalog],

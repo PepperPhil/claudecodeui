@@ -166,3 +166,26 @@ test('recent sessions are globally ordered, paginated, and limited to visible co
     );
   });
 });
+
+test('getLatestProjectSelection reads the newest session of that provider in the project', async () => {
+  await withIsolatedDatabase(() => {
+    const project = '/workspace/demo-project';
+    sessionsDb.createSession('session-old', 'claude', project, 'Old', '2026-07-18T09:00:00.000Z', '2026-07-18T09:00:00.000Z');
+    sessionsDb.createSession('session-new', 'claude', project, 'New', '2026-07-18T10:00:00.000Z', '2026-07-18T10:00:00.000Z');
+    sessionsDb.createSession('session-codex', 'codex', project, 'Codex', '2026-07-18T11:00:00.000Z', '2026-07-18T11:00:00.000Z');
+    sessionsDb.createSession('session-other', 'claude', '/workspace/other', 'Other', '2026-07-18T12:00:00.000Z', '2026-07-18T12:00:00.000Z');
+    sessionsDb.setSessionModel('session-old', 'sonnet');
+    sessionsDb.setSessionModel('session-new', 'opus');
+    sessionsDb.setSessionEffort('session-new', 'high');
+    sessionsDb.setSessionPermissionMode('session-new', 'acceptEdits');
+    sessionsDb.setSessionModel('session-codex', 'gpt-5.4');
+    sessionsDb.setSessionModel('session-other', 'haiku');
+
+    assert.deepEqual({ ...sessionsDb.getLatestProjectSelection(project, 'claude') }, {
+      model: 'opus',
+      effort: 'high',
+      permission_mode: 'acceptEdits',
+    });
+    assert.equal(sessionsDb.getLatestProjectSelection(project, 'cursor'), null);
+  });
+});

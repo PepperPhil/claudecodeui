@@ -15,9 +15,19 @@ import { AppError } from '@/shared/utils.js';
 
 /** Session-row access the service needs, narrowed so tests can stub it. */
 type ProviderModelsSessionStore = {
-  getSessionById(sessionId: string): { model: string | null; effort: string | null } | null;
+  getSessionById(sessionId: string): {
+    model: string | null;
+    effort: string | null;
+    permission_mode?: string | null;
+  } | null;
   setSessionModel(sessionId: string, model: string): void;
   setSessionEffort(sessionId: string, effort: string): void;
+  setSessionPermissionMode(sessionId: string, permissionMode: string): void;
+  getLatestProjectSelection(projectPath: string, provider: string): {
+    model: string | null;
+    effort: string | null;
+    permission_mode: string | null;
+  } | null;
 };
 
 /** SQLite catalog operations used by the Providers service and its unit fakes. */
@@ -431,6 +441,54 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
   };
 
   /**
+   * Records the permission mode one session runs with.
+   *
+   * Like `setSessionEffort`, this ignores an id without a session row. A mode
+   * the provider does not offer is ignored too, so the row only ever holds a
+   * mode the composer can show again.
+   */
+  const setSessionPermissionMode = (
+    provider: LLMProvider,
+    sessionId: string,
+    permissionMode: string,
+  ): { provider: LLMProvider; sessionId: string; permissionMode: string; source: 'session' } | null => {
+    const normalizedSessionId = sessionId.trim();
+    if (
+      !normalizedSessionId
+      || !providerCapabilitiesService.getProviderCapabilities(provider).permissionModes.includes(permissionMode)
+      || !sessions.getSessionById(normalizedSessionId)
+    ) {
+      return null;
+    }
+
+    sessions.setSessionPermissionMode(normalizedSessionId, permissionMode);
+    return { provider, sessionId: normalizedSessionId, permissionMode, source: 'session' };
+  };
+
+  /** The permission mode recorded on one session row, or null when none was. */
+  const readSessionPermissionMode = (sessionId: string): string | null => (
+    sessions.getSessionById(sessionId.trim())?.permission_mode?.trim() || null
+  );
+
+  /**
+   * What a new chat in a project starts with: the selection of the provider's
+   * most recently active session there. Nulls mean the project has no answer
+   * and the composer keeps its per-provider default.
+   */
+  const resolveProjectSelection = (
+    provider: LLMProvider,
+    projectPath: string,
+  ): { provider: LLMProvider; model: string | null; effort: string | null; permissionMode: string | null } => {
+    const row = sessions.getLatestProjectSelection(projectPath, provider);
+    return {
+      provider,
+      model: row?.model?.trim() || null,
+      effort: row?.effort?.trim() || null,
+      permissionMode: row?.permission_mode?.trim() || null,
+    };
+  };
+
+  /**
    * Answers "which model is this session using?" for every display surface.
    *
    * Precedence, highest first:
@@ -536,6 +594,9 @@ export const createProviderModelsService = (dependencies: ProviderModelsServiceD
     deleteCustomModel,
     setSessionModel,
     setSessionEffort,
+    setSessionPermissionMode,
+    readSessionPermissionMode,
+    resolveProjectSelection,
     resolveSessionModel,
     resolveResumeModel,
   };

@@ -175,6 +175,40 @@ test('reasoning effort is persisted and returned with the active session model',
   });
 });
 
+test('permission mode is persisted per session and seeds the project selection', async () => {
+  await withProviderServer(async (baseUrl, workspacePath) => {
+    sessionsDb.createAppSession('mode-session', 'codex', workspacePath);
+    const postMode = (permissionMode: string) => fetch(
+      `${baseUrl}/api/providers/codex/sessions/mode-session/active-permission-mode`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ permissionMode }),
+      },
+    );
+
+    // Codex has no plan mode.
+    assert.equal((await postMode('plan')).status, 400);
+    assert.equal((await postMode('acceptEdits')).status, 200);
+    assert.equal(sessionsDb.getSessionById('mode-session')?.permission_mode, 'acceptEdits');
+
+    const readResponse = await fetch(
+      `${baseUrl}/api/providers/codex/sessions/mode-session/active-model`,
+    );
+    const readPayload = await readResponse.json() as { data: { permissionMode: string | null } };
+    assert.equal(readPayload.data.permissionMode, 'acceptEdits');
+
+    const projectResponse = await fetch(
+      `${baseUrl}/api/providers/codex/project-selection?workspacePath=${encodeURIComponent(workspacePath)}`,
+    );
+    const projectPayload = await projectResponse.json() as { data: { permissionMode: string | null } };
+    assert.equal(projectResponse.status, 200);
+    assert.equal(projectPayload.data.permissionMode, 'acceptEdits');
+
+    assert.equal((await fetch(`${baseUrl}/api/providers/codex/project-selection`)).status, 400);
+  });
+});
+
 test('model routes expose immutable defaults and full custom model CRUD', async () => {
   await withProviderServer(async (baseUrl) => {
     const initialResponse = await fetch(`${baseUrl}/api/providers/codex/models`);

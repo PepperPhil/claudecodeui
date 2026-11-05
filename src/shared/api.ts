@@ -457,6 +457,12 @@ export const api = {
       post(`/api/providers/${provider}/sessions/${encodeURIComponent(sessionId)}/active-effort`, {
         effort,
       }),
+    setSessionActivePermissionMode: (provider: string, sessionId: string, permissionMode: string) =>
+      post(`/api/providers/${provider}/sessions/${encodeURIComponent(sessionId)}/active-permission-mode`, {
+        permissionMode,
+      }),
+    projectSelection: (provider: string, workspacePath: string) =>
+      get(`/api/providers/${provider}/project-selection${query({ workspacePath })}`),
 
     mcpServers: (
       provider: string,
